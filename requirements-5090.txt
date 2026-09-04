@@ -1,0 +1,21 @@
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# Blackwell: torch 2.8 + CUDA 12.8 is required (sm_120); keep the image torch.
+torch==2.8.0
+torchvision==0.23.0
+transformers==5.8.1
+safetensors
+datasets
+opencv-python
+Pillow
+numpy
+einops
+scipy
+matplotlib
+tensorboard
+tqdm
+pytest
+ninja
+
+# DeepSpeed for ZeRO-2; choose the latest version that matches torch 2.8.
+deepspeed>=0.16.2

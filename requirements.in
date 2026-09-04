@@ -1,0 +1,17 @@
+torch==2.5.1
+torchvision==0.20.1
+transformers==5.8.1
+peft
+accelerate
+deepspeed
+safetensors
+datasets
+opencv-python
+Pillow
+numpy
+einops
+scipy
+matplotlib
+tensorboard
+tqdm
+pytest

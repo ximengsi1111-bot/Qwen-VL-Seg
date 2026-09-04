@@ -1,0 +1,9 @@
+[project]
+name = "qwen3vl-seg"
+version = "0.1.0"
+description = "Reproduction of Qwen3-VL-Seg from scratch"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

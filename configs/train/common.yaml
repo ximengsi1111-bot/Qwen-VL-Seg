@@ -1,0 +1,20 @@
+seed: 42
+dtype: bf16
+micro_batch_size: 1
+gradient_accumulation_steps: 4
+global_batch_size: 16
+gradient_checkpointing: true
+grad_clip: 1.0
+max_pixels: 589824
+smoke_max_pixels: 262144
+optimizer:
+  name: adamw
+  betas: [0.9, 0.999]
+  weight_decay: 0.01
+model_path: /mingli01/models/Qwen3-VL-4B-Instruct
+data_root: /file_storage01/home/mingli/data/xyk
+num_workers: 4
+pin_memory: true
+log_interval: 10
+save_interval: 50
+eval_interval: 100

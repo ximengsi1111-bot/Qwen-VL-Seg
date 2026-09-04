@@ -1,0 +1,30 @@
+includes:
+  - common.yaml
+
+stage: 1
+micro_batch_size: 1
+gradient_accumulation_steps: 4
+global_batch_size: 16
+max_steps: 12500
+smoke_steps: 100
+learning_rate: 1.0e-4
+vision_learning_rate_scale: 0.01
+warmup_steps: 500
+min_learning_rate: 1.0e-6
+max_pixels: 1048576
+smoke_max_pixels: 262144
+method: lora
+lora_rank: 32
+lora_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+train_vision_encoder: true
+train_decoder: true
+save_interval: 1000
+checkpoint_dir: /file_storage01/home/mingli/data/xyk/checkpoints/small/stage1-100k
+manifest: /file_storage01/home/mingli/data/xyk/build100k/datasets/small/samples.jsonl

@@ -1,0 +1,6 @@
+includes:
+  - stage1_small.yaml
+
+gradient_accumulation_steps: 8
+global_batch_size: 16
+checkpoint_dir: /file_storage01/home/mingli/data/xyk/checkpoints/small/stage1-smoke-2gpu
