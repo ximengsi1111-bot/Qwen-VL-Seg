@@ -223,7 +223,7 @@ def _enable_special_token_training(
     row_mask[ids] = True
 
     def _masked_grad(grad: torch.Tensor) -> torch.Tensor:
-        return grad * row_mask.unsqueeze(-1)
+        return grad * row_mask.to(grad.device).unsqueeze(-1)
 
     for parameter in targets:
         parameter.requires_grad_(True)
