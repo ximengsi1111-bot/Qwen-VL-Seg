@@ -2,7 +2,7 @@ includes:
   - stage1_100k_zhurong.yaml
 
 use_bucket: true
-bucket_sizes: [256, 512, 768]
+bucket_sizes: [256, 384, 512, 640, 768]
 max_pixels: 589824
 smoke_max_pixels: 589824
 micro_batch_size: 4

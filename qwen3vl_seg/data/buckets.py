@@ -5,7 +5,7 @@ from __future__ import annotations
 from PIL import Image
 
 
-BUCKET_SIZES = (256, 512, 768)
+BUCKET_SIZES = (256, 384, 512, 640, 768)
 
 
 def choose_bucket(
