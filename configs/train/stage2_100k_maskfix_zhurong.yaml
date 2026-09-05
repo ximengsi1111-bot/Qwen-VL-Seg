@@ -1,0 +1,4 @@
+includes:
+  - stage2_100k_zhurong.yaml
+checkpoint_dir: /file_storage01/home/mingli/data/xyk/checkpoints/small/stage2-100k-maskfix
+stage1_checkpoint: /file_storage01/home/mingli/data/xyk/checkpoints/small/stage1-100k-maskfix
