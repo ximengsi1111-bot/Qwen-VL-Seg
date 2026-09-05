@@ -289,6 +289,7 @@ def _ds_save_checkpoint(
     checkpoint_dir: Path,
 ) -> None:
     save_dir = checkpoint_dir / "ds"
+    tag = f"step-{trainer_state['step']}"
     engine.save_checkpoint(
         save_dir=str(save_dir),
         tag=f"step-{trainer_state['step']}",
