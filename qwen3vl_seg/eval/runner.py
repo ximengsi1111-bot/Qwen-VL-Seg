@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from PIL import Image, ImageDraw
 
 from qwen3vl_seg.data.dataset import SegmentationDataset, normalize_decoder_image
-from qwen3vl_seg.eval.metrics import mask_iou
+from qwen3vl_seg.eval.metrics import mask_iou, match_masks
 from qwen3vl_seg.model.model_wrapper import Qwen3VLSegForSegmentation
 from qwen3vl_seg.model.prompt_format import (
     MASK_END,
@@ -35,6 +35,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-pixels", type=int, default=262144)
     parser.add_argument("--output-dir", default="")
     parser.add_argument("--save-viz", action="store_true")
+    parser.add_argument("--splits", default="val,testA,testB,test")
     return parser.parse_args()
 
 
@@ -140,12 +141,21 @@ def main() -> int:
         split=None,
         max_pixels=args.max_pixels,
     )
+    if args.splits:
+        keep = {s.strip() for s in args.splits.split(",") if s.strip()}
+        dataset.samples = [s for s in dataset.samples if s.split in keep]
     output_dir = Path(args.output_dir or "preds")
     output_dir.mkdir(parents=True, exist_ok=True)
     if args.save_viz:
         (output_dir / "viz").mkdir(parents=True, exist_ok=True)
     out_path = output_dir / "predictions.jsonl"
     results: list[dict[str, Any]] = []
+    all_ious: list[float] = []
+    sum_inter = 0.0
+    sum_union = 0.0
+    strict_values: list[float] = []
+    strict_correct = 0
+    strict_total = 0
 
     with torch.inference_mode():
         for idx in range(min(args.max_samples, len(dataset))):
@@ -240,22 +250,30 @@ def main() -> int:
                 preds = (torch.sigmoid(logits) > 0.5).float().cpu().numpy()
                 iou_preds = out_dec["iou_scores"][0].float().cpu().numpy()
                 gt = item["masks"].cpu().numpy()
-                ious = []
-                for j in range(num):
-                    if j < gt.shape[0]:
-                        ious.append(
-                            float(
-                                mask_iou(
-                                    np.expand_dims(preds[j], 0),
-                                    np.expand_dims(gt[j], 0),
-                                )
-                            )
+                pred_list = [preds[i] for i in range(num)]
+                gt_list = [np.asarray(gt[j]) for j in range(gt.shape[0])]
+                pred_idx, gt_idx, total = match_masks(pred_list, gt_list)
+                matched_ious: list[float] = []
+                for pj, gj in zip(pred_idx, gt_idx):
+                    iou = float(
+                        mask_iou(
+                            np.expand_dims(pred_list[pj], 0),
+                            np.expand_dims(gt_list[gj], 0),
                         )
-                    else:
-                        ious.append(0.0)
-                row["mask_ious"] = ious
+                    )
+                    matched_ious.append(iou)
+                    inter = np.logical_and(pred_list[pj] > 0, gt_list[gj] > 0).sum()
+                    union = np.logical_or(pred_list[pj] > 0, gt_list[gj] > 0).sum()
+                    sum_inter += float(inter)
+                    sum_union += float(union)
+                all_ious.extend(matched_ious)
+                strict_correct += sum(1 for iou in matched_ious if iou >= 0.5)
+                strict_total += len(gt_list)
+                strict = total / max(len(gt_list), 1)
+                row["mask_ious"] = matched_ious
                 row["iou_scores"] = [float(v) for v in iou_preds]
-                row["miou"] = float(np.mean(ious)) if ious else 0.0
+                row["miou"] = strict
+                strict_values.append(strict)
                 if args.save_viz:
                     _save_mask_viz(
                         image,
@@ -266,6 +284,7 @@ def main() -> int:
             else:
                 row["miou"] = 0.0
                 row["mask_ious"] = []
+                strict_values.append(0.0)
 
             results.append(row)
             print(json.dumps(row, ensure_ascii=False), flush=True)
@@ -273,7 +292,21 @@ def main() -> int:
     with out_path.open("w", encoding="utf-8") as f:
         for row in results:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    metrics = {
+        "n_samples": len(results),
+        "miou": float(np.mean(strict_values)) if strict_values else 0.0,
+        "ciou": float(sum_inter / sum_union) if sum_union > 0 else 0.0,
+        "matched_p@0.5": (
+            float(np.mean(np.asarray(all_ious) >= 0.5)) if all_ious else 0.0
+        ),
+        "strict_p@0.5": (
+            float(strict_correct / strict_total) if strict_total else 0.0
+        ),
+    }
+    metrics_path = output_dir / "metrics.json"
+    metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(f"done {len(results)} -> {out_path}")
+    print(json.dumps(metrics, ensure_ascii=False))
     return 0
 
 
