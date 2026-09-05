@@ -34,6 +34,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--max-pixels", type=int, default=262144)
     parser.add_argument("--output-dir", default="")
+    parser.add_argument("--no-viz", action="store_true")
     parser.add_argument("--save-viz", action="store_true")
     parser.add_argument("--splits", default="val,testA,testB,test")
     return parser.parse_args()
@@ -101,25 +102,58 @@ def _inject_mask_placeholders(text: str) -> str:
     )
 
 
-def _save_mask_viz(
+def _panel(
     image: Image.Image,
     mask: np.ndarray,
-    bbox: list[float],
-    path: Path,
-) -> None:
+    boxes: list[tuple[float, float, float, float]],
+    color: tuple[int, int, int],
+) -> Image.Image:
     width, height = image.size
-    mask_img = Image.fromarray((mask * 255).astype(np.uint8)).resize(
+    canvas = Image.fromarray((mask * 255).astype(np.uint8)).resize(
         (width, height), Image.BILINEAR
     )
     base = np.array(image.convert("RGB"), dtype=np.float32)
-    alpha = np.array(mask_img, dtype=np.float32) / 255.0
+    alpha = np.array(canvas, dtype=np.float32) / 255.0
     overlay = base * (1.0 - 0.6 * alpha[..., None]) + (
-        np.array([255, 0, 0], dtype=np.float32) * 0.6 * alpha[..., None]
+        np.array(color, dtype=np.float32) * 0.6 * alpha[..., None]
     )
     out = Image.fromarray(overlay.astype(np.uint8))
     draw = ImageDraw.Draw(out)
-    x1, y1, x2, y2 = [float(v) / 1000.0 * s for v, s in zip(bbox, (width, height, width, height))]
-    draw.rectangle([x1, y1, x2, y2], outline=(0, 90, 255), width=3)
+    for box in boxes:
+        x1, y1, x2, y2 = box
+        draw.rectangle([x1, y1, x2, y2], outline=(0, 90, 255), width=3)
+    return out
+
+
+def _save_mask_viz(
+    image: Image.Image,
+    pred_mask: np.ndarray,
+    pred_bbox_1000: list[float],
+    gt_masks: np.ndarray,
+    gt_boxes_norm: np.ndarray,
+    path: Path,
+) -> None:
+    width, height = image.size
+    pred_boxes = [
+        (
+            float(pred_bbox_1000[0]) / 1000.0 * width,
+            float(pred_bbox_1000[1]) / 1000.0 * height,
+            float(pred_bbox_1000[2]) / 1000.0 * width,
+            float(pred_bbox_1000[3]) / 1000.0 * height,
+        )
+    ]
+    gt_boxes = []
+    if gt_boxes_norm is not None and gt_boxes_norm.ndim == 2:
+        for box in gt_boxes_norm:
+            gt_boxes.append((box[0] * width, box[1] * height, box[2] * width, box[3] * height))
+    gt_mask = np.asarray(gt_masks)
+    if gt_mask.ndim == 3:
+        gt_mask = gt_mask.max(axis=0)
+    left = _panel(image, np.asarray(pred_mask), pred_boxes, (255, 0, 0))
+    right = _panel(image, gt_mask, gt_boxes, (0, 200, 0))
+    combined = Image.new("RGB", (left.width * 2, left.height))
+    combined.paste(left, (0, 0))
+    combined.paste(right, (left.width, 0))
     out.save(path)
 
 
@@ -146,7 +180,8 @@ def main() -> int:
         dataset.samples = [s for s in dataset.samples if s.split in keep]
     output_dir = Path(args.output_dir or "preds")
     output_dir.mkdir(parents=True, exist_ok=True)
-    if args.save_viz:
+    save_viz = args.save_viz or not args.no_viz
+    if save_viz:
         (output_dir / "viz").mkdir(parents=True, exist_ok=True)
     out_path = output_dir / "predictions.jsonl"
     results: list[dict[str, Any]] = []
@@ -276,12 +311,14 @@ def main() -> int:
                 row["iou_scores"] = [float(v) for v in iou_preds]
                 row["miou"] = strict
                 strict_values.append(strict)
-                if args.save_viz:
+                if save_viz:
                     _save_mask_viz(
                         image,
                         preds[0],
                         records[0]["bbox_2d"],
-                        output_dir / "viz" / f"{sample.sample_id}_pred.png",
+                        gt,
+                        item["boxes"].detach().cpu().numpy(),
+                        output_dir / "viz" / f"{sample.sample_id}_cmp.png",
                     )
             else:
                 row["miou"] = 0.0
