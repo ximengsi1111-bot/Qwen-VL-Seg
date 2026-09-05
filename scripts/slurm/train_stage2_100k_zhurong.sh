@@ -13,10 +13,16 @@
 set -e
 export PYTHONNOUSERSITE=1
 export OMP_NUM_THREADS=4
-source /etc/profile.d/lmod.sh
-module load conda/3
-module load cuda/13.0
-source activate segment
+if [ -f /etc/profile.d/lmod.sh ]; then
+  . /etc/profile.d/lmod.sh
+elif [ -f /etc/profile.d/modules.sh ]; then
+  . /etc/profile.d/modules.sh
+fi
+if command -v module >/dev/null 2>&1; then
+  module load conda/3 2>/dev/null || true
+  module load cuda/13.0 2>/dev/null || true
+fi
+export PATH=/persist_data/home/mingli/.conda/envs/segment/bin:$PATH
 cd /mingli01/project/xiyongkai/qwen3vl-seg
 
 export DATA_ROOT=/file_storage01/home/mingli/data/xyk
