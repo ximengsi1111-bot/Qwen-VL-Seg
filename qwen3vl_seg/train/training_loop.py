@@ -12,6 +12,7 @@ import json
 import math
 import os
 import random
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -295,6 +296,9 @@ def _ds_save_checkpoint(
         save_latest=True,
         exclude_frozen_parameters=True,
     )
+    for child in save_dir.glob("step-*"):
+        if child.name != tag:
+            shutil.rmtree(child, ignore_errors=True)
     _save_rng(rank, save_dir)
     if rank == 0:
         (save_dir / "trainer_state.json").write_text(

@@ -2,7 +2,7 @@
 #SBATCH --partition=gre
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
-#SBATCH --exclude=gpu36,gpu37
+#SBATCH --exclusive
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=192G
 #SBATCH --time=12:00:00
