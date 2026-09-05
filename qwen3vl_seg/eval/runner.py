@@ -154,7 +154,7 @@ def _save_mask_viz(
     combined = Image.new("RGB", (left.width * 2, left.height))
     combined.paste(left, (0, 0))
     combined.paste(right, (left.width, 0))
-    out.save(path)
+    combined.save(path)
 
 
 def main() -> int:
