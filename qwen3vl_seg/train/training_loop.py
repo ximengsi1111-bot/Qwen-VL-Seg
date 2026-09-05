@@ -24,6 +24,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader
 
 from qwen3vl_seg.data.collator import SegmentationCollator
+from qwen3vl_seg.data.bucket_sampler import BucketOrderSampler, BucketProcessSampler
 from qwen3vl_seg.data.dataset import SegmentationDataset
 from qwen3vl_seg.data.samplers import StepIndexSampler
 from qwen3vl_seg.model.lora import apply_lora, merge_lora
@@ -292,7 +293,7 @@ def _ds_save_checkpoint(
     tag = f"step-{trainer_state['step']}"
     engine.save_checkpoint(
         save_dir=str(save_dir),
-        tag=f"step-{trainer_state['step']}",
+        tag=tag,
         client_state={"trainer_state": trainer_state, "scheduler": scheduler.state_dict()},
         save_latest=True,
         exclude_frozen_parameters=True,
@@ -444,6 +445,10 @@ def main() -> int:
     warmup_steps = int(config.get("warmup_steps", 0))
 
     max_pixels = int(config["max_pixels"])
+    bucket_sizes_cfg = config.get("bucket_sizes")
+    bucket_sizes = (
+        tuple(int(v) for v in bucket_sizes_cfg) if bucket_sizes_cfg else None
+    )
     processor = wrapper.processor
     dataset = SegmentationDataset(
         manifest_path=config["manifest"],
@@ -452,6 +457,8 @@ def main() -> int:
         split="train",
         limit=args.data_limit or None,
         max_pixels=max_pixels,
+        use_bucket=bool(config.get("use_bucket", False)),
+        bucket_sizes=bucket_sizes,
     )
     accum = int(config["gradient_accumulation_steps"])
     use_deepspeed = bool(args.deepspeed_config)
@@ -528,16 +535,34 @@ def main() -> int:
         _rank0(rank, f"already at final step {start_step}")
         return 0
 
-    sampler = StepIndexSampler(
-        dataset_size=len(dataset),
-        world_size=world_size,
-        rank=rank,
-        start_step=start_step,
-        total_steps=total_steps,
-        gradient_accumulation_steps=accum,
-        seed=seed,
-    )
-    collate = SegmentationCollator()
+    if bool(config.get("use_bucket", False)):
+        if world_size > 1:
+            sampler = BucketProcessSampler(
+                dataset,
+                batch_size=int(config["micro_batch_size"]),
+                world_size=world_size,
+                rank=rank,
+                seed=seed,
+                bucket_sizes=bucket_sizes,
+            )
+        else:
+            sampler = BucketOrderSampler(
+                dataset,
+                batch_size=int(config["micro_batch_size"]),
+                seed=seed,
+                bucket_sizes=bucket_sizes,
+            )
+    else:
+        sampler = StepIndexSampler(
+            dataset_size=len(dataset),
+            world_size=world_size,
+            rank=rank,
+            start_step=start_step,
+            total_steps=total_steps,
+            gradient_accumulation_steps=accum,
+            seed=seed,
+        )
+    collate = SegmentationCollator(wrapper.tokenizer.pad_token_id or 0)
     dataloader = DataLoader(
         dataset,
         batch_size=int(config["micro_batch_size"]),

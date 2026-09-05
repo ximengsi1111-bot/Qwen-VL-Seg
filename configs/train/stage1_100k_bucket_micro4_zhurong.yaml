@@ -1,0 +1,14 @@
+includes:
+  - stage1_100k_zhurong.yaml
+
+use_bucket: true
+bucket_sizes: [256, 512, 768]
+max_pixels: 589824
+smoke_max_pixels: 589824
+micro_batch_size: 4
+gradient_accumulation_steps: 1
+global_batch_size: 16
+learning_rate: 4.0e-4
+warmup_steps: 1000
+num_workers: 2
+checkpoint_dir: /file_storage01/home/mingli/data/xyk/checkpoints/small/stage1-100k-bucket

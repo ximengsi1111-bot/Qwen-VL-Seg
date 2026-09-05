@@ -25,8 +25,10 @@ class Qwen3VLSegConfig:
 
 
 def _batch_row(value: Any, batch_index: int) -> Any:
-    if torch.is_tensor(value) and value.ndim >= 2 and value.shape[0] == 1:
-        return value[0]
+    if torch.is_tensor(value) and value.ndim >= 2:
+        if value.shape[0] == 1:
+            return value[0]
+        return value[batch_index]
     if isinstance(value, list):
         return value[batch_index]
     return value
@@ -138,10 +140,13 @@ class Qwen3VLSegForSegmentation(nn.Module):
         if boxes.ndim == 2:
             boxes = boxes.unsqueeze(0)
         masks = batch["masks"]
-        if masks.ndim == 3:
-            masks = masks.unsqueeze(0)
         boxes = boxes.to(self.base.device)
-        masks = masks.to(self.base.device)
+        if isinstance(masks, list):
+            masks = [m.to(self.base.device) for m in masks]
+        else:
+            if masks.ndim == 3:
+                masks = masks.unsqueeze(0)
+            masks = masks.to(self.base.device)
         num_instances = batch["num_instances"]
         if isinstance(num_instances, int):
             num_instances = [num_instances]
@@ -161,14 +166,20 @@ class Qwen3VLSegForSegmentation(nn.Module):
             row_boxes = _batch_row(boxes, row)[:count].unsqueeze(0)
             row_masks = _batch_row(masks, row)[:count].unsqueeze(0)
             image_tensor = batch["image"]
-            if image_tensor.ndim == 3:
-                image_tensor = image_tensor.unsqueeze(0)
+            if isinstance(image_tensor, (list, tuple)):
+                img = image_tensor[image_index]
+            elif image_tensor.ndim == 4:
+                img = image_tensor[image_index]
+            else:
+                img = image_tensor
+            if img.ndim == 3:
+                img = img.unsqueeze(0)
             decoder_input = {
                 "visual_features": feature["visual"],
                 "mm_features": feature["mm"].to(seg_features.dtype),
                 "seg_features": seg_features.to(self.decoder_dtype),
                 "boxes": row_boxes.to(self.decoder_dtype),
-                "image": image_tensor.to(
+                "image": img.to(
                     device=self.base.device, dtype=self.decoder_dtype
                 ),
             }
@@ -192,8 +203,27 @@ class Qwen3VLSegForSegmentation(nn.Module):
             iou_loss = torch.stack([entry["losses"]["iou_mse_loss"] for entry in decoder_outputs]).mean()
             outputs["seg_loss"] = seg_loss
             outputs["iou_mse_loss"] = iou_loss
-            outputs["mask_logits"] = torch.cat([entry["mask_logits"] for entry in decoder_outputs], dim=0)
-            outputs["iou_scores"] = torch.cat([entry["iou_scores"] for entry in decoder_outputs], dim=0)
+            max_inst = max(entry["mask_logits"].shape[1] for entry in decoder_outputs)
+            mask_logits_list: list[torch.Tensor] = []
+            iou_scores_list: list[torch.Tensor] = []
+            for entry in decoder_outputs:
+                logits = entry["mask_logits"]
+                if logits.shape[1] < max_inst:
+                    pad = logits.new_zeros(
+                        logits.shape[0],
+                        max_inst - logits.shape[1],
+                        logits.shape[2],
+                        logits.shape[3],
+                    )
+                    logits = torch.cat([logits, pad], dim=1)
+                iou = entry["iou_scores"]
+                if iou.shape[1] < max_inst:
+                    pad = iou.new_zeros(iou.shape[0], max_inst - iou.shape[1])
+                    iou = torch.cat([iou, pad], dim=1)
+                mask_logits_list.append(logits)
+                iou_scores_list.append(iou)
+            outputs["mask_logits"] = torch.cat(mask_logits_list, dim=0)
+            outputs["iou_scores"] = torch.cat(iou_scores_list, dim=0)
             if base_output.loss is not None:
                 outputs["total_loss"] = (
                     base_output.loss + seg_loss + self.config.iou_loss_weight * iou_loss
