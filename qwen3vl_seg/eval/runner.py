@@ -31,7 +31,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--max-samples", type=int, default=8)
+    parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--max-pixels", type=int, default=262144)
     parser.add_argument("--output-dir", default="")
     parser.add_argument("--save-viz", action="store_true")
@@ -158,7 +158,9 @@ def main() -> int:
     strict_total = 0
 
     with torch.inference_mode():
-        for idx in range(min(args.max_samples, len(dataset))):
+        total = len(dataset)
+        limit = args.max_samples if args.max_samples > 0 else total
+        for idx in range(min(limit, total)):
             sample = dataset.samples[idx]
             item = dataset[idx]
             image_path = Path(args.data_root) / sample.image_path

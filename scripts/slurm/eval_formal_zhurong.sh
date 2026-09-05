@@ -36,4 +36,5 @@ python3 -m qwen3vl_seg.eval.runner \
   --manifest "$DATA_ROOT/build100k/datasets/small/samples.jsonl" \
   --splits val,testA,testB,test \
   --max-pixels 262144 \
+  --max-samples 0 \
   --output-dir "$DATA_ROOT/runs/eval/stage2-100k-formal"
