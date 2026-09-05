@@ -60,7 +60,7 @@ class SegmentationDataset(Dataset):
         limit: int | None = None,
         max_pixels: int = 589824,
         min_pixels: int | None = None,
-        ignore_mask_token_in_ce: bool = True,
+        ignore_mask_token_in_ce: bool = False,
         use_bucket: bool = False,
         bucket_sizes: tuple[int, ...] | list[int] | None = None,
     ) -> None:

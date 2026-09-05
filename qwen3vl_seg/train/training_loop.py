@@ -197,9 +197,37 @@ def _configure_trainable(
         if method == "full" and name.startswith("base.model.language_model."):
             parameter.requires_grad_(True)
 
+    if method == "lora":
+        _enable_special_token_training(wrapper)
+
     trainable = sum(p.numel() for p in wrapper.parameters() if p.requires_grad)
     total = sum(p.numel() for p in wrapper.parameters())
     return {"trainable_parameters": trainable, "total_parameters": total}
+
+
+def _enable_special_token_training(
+    wrapper: Qwen3VLSegForSegmentation,
+) -> None:
+    """Make only the added seg-token rows of embedding/head trainable in Stage1."""
+    targets: list[torch.nn.Parameter] = []
+    for name, parameter in wrapper.named_parameters():
+        if name.endswith("embed_tokens.weight") or name.endswith("lm_head.weight"):
+            targets.append(parameter)
+    if not targets:
+        raise RuntimeError("could not find embed_tokens.weight / lm_head.weight")
+    device = targets[0].device
+    ids = torch.as_tensor(list(wrapper.special_token_ids), device=device)
+    row_mask = torch.zeros(
+        targets[0].shape[0], dtype=torch.bool, device=device
+    )
+    row_mask[ids] = True
+
+    def _masked_grad(grad: torch.Tensor) -> torch.Tensor:
+        return grad * row_mask.unsqueeze(-1)
+
+    for parameter in targets:
+        parameter.requires_grad_(True)
+        parameter.register_hook(_masked_grad)
 
 
 def _run_dir(data_root: str, checkpoint_dir: str) -> Path:
