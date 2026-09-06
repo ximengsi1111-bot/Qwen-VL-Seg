@@ -32,6 +32,7 @@ swift rlhf \
   --rlhf_type grpo \
   --advantage_estimator grpo \
   --num_generations 4 \
+  --generation_batch_size 4 \
   --num_ppo_epochs 1 \
   --max_epochs 1 \
   --output_dir /mingli01/data/xyk/grpo/smoke_out
