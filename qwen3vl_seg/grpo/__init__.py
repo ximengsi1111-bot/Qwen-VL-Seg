@@ -1,0 +1,1 @@
+"""GRPO reward / helpers for Qwen3-VL-Seg."""
