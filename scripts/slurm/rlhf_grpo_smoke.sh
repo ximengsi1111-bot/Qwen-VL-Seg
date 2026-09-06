@@ -24,7 +24,7 @@ export PYTHONPATH=.
 export HF_HOME=/mingli01/data/xyk/cache/hf
 mkdir -p /mingli01/data/xyk/grpo
 
-swift rlhf \
+python qwen3vl_seg/grpo/run_rlhf.py \
   --model /mingli01/data/xyk/model/grpo-policy \
   --model_type qwen3_vl \
   --dataset /mingli01/data/xyk/grpo/rl_smoke.jsonl \
