@@ -29,6 +29,7 @@ swift rlhf \
   --model_type qwen3_vl \
   --dataset /mingli01/data/xyk/grpo/rl_smoke.jsonl \
   --reward_funcs seg_iou \
+  --rlhf_type grpo \
   --advantage_estimator grpo \
   --num_generations 4 \
   --num_ppo_epochs 1 \

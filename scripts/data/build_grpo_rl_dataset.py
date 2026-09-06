@@ -48,7 +48,6 @@ def main():
                     ],
                 }],
                 "response": target_text,
-                "rejected_response": "",
                 "solution": json.dumps({
                     "bbox_1000": bbox_1000,
                     "image_path": image_abs,
