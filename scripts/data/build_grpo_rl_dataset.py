@@ -1,14 +1,14 @@
 """Convert the GRPO prompt pool into ms-swift RLHF dataset format.
 
-Each row: messages (image + prompt), solution (GT json for reward), plus
-custom columns (image_path, mask_paths, bboxes, image_size) that ms-swift
-passes through to reward kwargs.
+Rows carry messages (image+prompt), response (gold target text), a
+rejected_response placeholder (satisfies ms-swift RLHF template), solution
+(GT json for the reward) plus custom columns for reward kwargs.
 """
 import json
 import os
 from types import SimpleNamespace
 
-from qwen3vl_seg.model.prompt_format import build_user_prompt, _scale_box
+from qwen3vl_seg.model.prompt_format import build_user_prompt, build_target_text, _scale_box
 
 SRC = "/mingli01/data/xyk/grpo/prompts.jsonl"
 DATA_ROOT = "/mingli01/data/xyk"
@@ -34,6 +34,7 @@ def main():
             d = json.loads(line)
             ns = _ns(d)
             user_text = build_user_prompt(ns)
+            target_text = build_target_text(ns)
             image_abs = os.path.join(DATA_ROOT, d["image_path"])
             masks_abs = [os.path.join(DATA_ROOT, m) for m in d["mask_paths"]]
             h, w = (int(v) for v in d["image_size"])
@@ -46,7 +47,8 @@ def main():
                         {"type": "text", "text": user_text},
                     ],
                 }],
-                "response": "",
+                "response": target_text,
+                "rejected_response": "",
                 "solution": json.dumps({
                     "bbox_1000": bbox_1000,
                     "image_path": image_abs,
