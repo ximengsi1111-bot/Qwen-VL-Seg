@@ -30,8 +30,10 @@ python qwen3vl_seg/grpo/run_rlhf.py \
   --reward_funcs seg_iou \
   --rlhf_type grpo \
   --advantage_estimator grpo \
-  --num_generations 4 \
-  --generation_batch_size 4 \
+  --num_generations 8 \
+  --generation_batch_size 8 \
+  --learning_rate 2e-5 \
+  --per_device_train_batch_size 2 \
   --num_ppo_epochs 1 \
   --max_epochs 1 \
   --report_to none \
