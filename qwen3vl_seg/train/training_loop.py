@@ -319,6 +319,9 @@ def _ds_save_checkpoint(
 ) -> None:
     save_dir = checkpoint_dir / "ds"
     tag = f"step-{trainer_state['step']}"
+    for child in save_dir.glob("step-*"):
+        if child.name != tag:
+            shutil.rmtree(child, ignore_errors=True)
     engine.save_checkpoint(
         save_dir=str(save_dir),
         tag=tag,
@@ -326,9 +329,6 @@ def _ds_save_checkpoint(
         save_latest=True,
         exclude_frozen_parameters=True,
     )
-    for child in save_dir.glob("step-*"):
-        if child.name != tag:
-            shutil.rmtree(child, ignore_errors=True)
     _save_rng(rank, save_dir)
     if rank == 0:
         (save_dir / "trainer_state.json").write_text(
