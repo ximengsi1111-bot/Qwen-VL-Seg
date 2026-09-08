@@ -2,8 +2,7 @@
 #SBATCH --partition=gre
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
-#SBATCH --exclusive
-#SBATCH --cpus-per-task=12
+#SBATCH --cpus-per-task=4
 #SBATCH --mem=120G
 #SBATCH --time=00:30:00
 #SBATCH --job-name=qvlseg-grpo-smoke
@@ -35,4 +34,5 @@ python qwen3vl_seg/grpo/run_rlhf.py \
   --generation_batch_size 4 \
   --num_ppo_epochs 1 \
   --max_epochs 1 \
+  --report_to none \
   --output_dir /mingli01/data/xyk/grpo/smoke_out
