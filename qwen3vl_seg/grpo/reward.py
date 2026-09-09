@@ -4,10 +4,22 @@
 item's gold response (JSON) carrying GT.  Custom dataset columns
 (``image_path``/``mask_paths``/``bboxes``/``image_size``) and ``messages``
 flow into ``**kwargs`` via ``to_reward_row``.
+
+Mask term is aligned to the formal eval (runner_multi.py) semantics:
+  - Hungarian optimal instance matching (NOT index pairing)
+  - per-GT-instance recall aggregation (sum of matched IoU / n_gt), so missing
+    GT instances are penalised
+  - identical image/mask resolution as the eval (``GRPO_MAX_PIXELS``, default 262144)
+  - base model = GRPO policy base, and an optional saved adapter (``GRPO_ADAPTER``)
+    can be merged for OFFLINE reward evaluation on a checkpoint.
+NOTE: ms-swift's ORM reward does not receive the in-training model, so the live
+GRPO reward cannot see the training-LoRA; ``GRPO_ADAPTER`` only applies to
+post-hoc/offline reward checks on a saved adapter.
 """
 from __future__ import annotations
 
 import json
+import os
 import numpy as np
 from typing import Any
 from PIL import Image
@@ -29,6 +41,13 @@ def _box_iou(a, b):
 
 
 _STAGE2_CKPT = "/file_storage01/home/mingli/data/xyk/checkpoints/small/stage2-100k"
+# Base for the seg wrapper = the GRPO policy base (SFT policy). The stage2 mask
+# decoder is loaded on top via _load_stage2.
+_BASE_MODEL = os.environ.get("GRPO_BASE", "/mingli01/data/xyk/model/grpo-policy")
+# Optional adapter to merge for OFFLINE reward evaluation (see module docstring).
+_GRPO_ADAPTER = os.environ.get("GRPO_ADAPTER", "")
+# Same image/mask resolution as the formal eval (runner_multi --max-pixels).
+_MAX_PIXELS = int(os.environ.get("GRPO_MAX_PIXELS", "262144"))
 
 
 class SegIoUReward(ORM):
@@ -46,9 +65,14 @@ class SegIoUReward(ORM):
             from qwen3vl_seg.model.model_wrapper import Qwen3VLSegForSegmentation
             from qwen3vl_seg.eval.runner import _load_stage2
             wrapper = Qwen3VLSegForSegmentation.from_pretrained(
-                "/mingli01/models/Qwen3-VL-4B-Instruct", torch_dtype=torch.bfloat16
+                _BASE_MODEL, torch_dtype=torch.bfloat16
             )
             _load_stage2(wrapper, _STAGE2_CKPT)
+            if _GRPO_ADAPTER:
+                from peft import PeftModel
+                peft_model = PeftModel.from_pretrained(wrapper.base, _GRPO_ADAPTER)
+                wrapper.base = peft_model.merge_and_unload()
+                print(f"[SegIoUReward] merged adapter: {_GRPO_ADAPTER}", flush=True)
             device = "cuda" if torch.cuda.is_available() else "cpu"
             wrapper.to(device, dtype=torch.bfloat16)
             wrapper.eval()
@@ -101,13 +125,17 @@ class SegIoUReward(ORM):
         return rewards
 
     def _mask_iou(self, comp, gt, sample_messages):
-        """Run the frozen decoder to get a predicted mask, IoU vs GT mask."""
+        """Run the frozen decoder to get a predicted mask, scored like the formal eval.
+
+        Uses Hungarian instance matching and per-GT recall aggregation, matching
+        the per-sample miou definition in ``runner_multi.py`` / ``metrics.py``.
+        """
         from qwen3vl_seg.model.prompt_format import (
             MASK_START, MASK_TOKEN, MASK_END,
         )
         from qwen3vl_seg.eval.runner import _inject_mask_placeholders, parse_generated_boxes_and_masks
         from qwen3vl_seg.data.dataset import normalize_decoder_image
-        from qwen3vl_seg.eval.metrics import mask_iou
+        from qwen3vl_seg.eval.metrics import match_masks
 
         records = parse_generated_boxes_and_masks(comp)
         if not records:
@@ -145,7 +173,7 @@ class SegIoUReward(ORM):
         full = processor.apply_chat_template(
             msgs, tokenize=True, add_generation_prompt=False,
             return_tensors="pt", return_dict=True,
-            processor_kwargs={"images_kwargs": {"max_pixels": 1048576, "min_pixels": 56 * 56}},
+            processor_kwargs={"images_kwargs": {"max_pixels": _MAX_PIXELS, "min_pixels": 56 * 56}},
         )
         full = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in full.items()}
         grid = full["image_grid_thw"][0]
@@ -174,16 +202,17 @@ class SegIoUReward(ORM):
         logits = out_dec["mask_logits"][0]
         preds = (torch.sigmoid(logits) > 0.5).float().cpu().numpy()
 
-        # GT masks -> stride size
+        # GT masks -> stride size (ALL GT instances, so missing GT is penalised)
         gt_masks = []
-        for mask_rel in gt.get("mask_paths", [])[:num]:
+        for mask_rel in gt.get("mask_paths", []):
             with Image.open(mask_rel) as mh:
                 m = mh.convert("L").resize((stride_w, stride_h), Image.BILINEAR)
             gt_masks.append(np.asarray(m, dtype=np.uint8))
         if not gt_masks:
             return 0.0
-        ious = []
-        for pj in range(len(preds)):
-            if pj < len(gt_masks):
-                ious.append(mask_iou(np.expand_dims(preds[pj], 0), np.expand_dims(gt_masks[pj], 0)))
-        return float(np.mean(ious)) if ious else 0.0
+
+        # Hungarian optimal assignment + per-GT-recall aggregation (same as eval).
+        pred_list = [preds[i] for i in range(len(preds))]
+        gt_list = [np.asarray(g, dtype=np.uint8) for g in gt_masks]
+        pred_idx, gt_idx, total = match_masks(pred_list, gt_list)
+        return float(total / max(len(gt_list), 1))
