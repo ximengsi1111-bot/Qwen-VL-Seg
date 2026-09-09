@@ -41,6 +41,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--splits", default="val,testA,testB,test")
     parser.add_argument("--shard-rank", type=int, default=0)
     parser.add_argument("--shard-size", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=1)
     return parser.parse_args()
 
 
@@ -180,6 +181,8 @@ def main() -> int:
         print(f"[runner_multi] merged LoRA adapter: {args.adapter}", flush=True)
     wrapper.to(device, dtype=torch.bfloat16)
     wrapper.eval()
+    # Qwen3-VL is decoder-only: batch generation requires LEFT padding.
+    wrapper.processor.tokenizer.padding_side = "left"
 
     dataset = SegmentationDataset(
         manifest_path=args.manifest,
@@ -208,16 +211,33 @@ def main() -> int:
     with torch.inference_mode():
         total = len(dataset)
         limit = args.max_samples if args.max_samples > 0 else total
-        for idx in range(shard_rank, min(limit, total), shard_size):
-            sample = dataset.samples[idx]
-            item = dataset[idx]
-            image_path = Path(args.data_root) / sample.image_path
-            image = Image.open(image_path).convert("RGB")
-            user_msg = _generation_messages(sample)
-            enc = _encode(
-                wrapper, user_msg, image, args.max_pixels, device,
+        sample_indices = list(range(shard_rank, min(limit, total), shard_size))
+        batch_size = max(1, int(args.batch_size))
+        for bstart in range(0, len(sample_indices), batch_size):
+            chunk_idx = sample_indices[bstart:bstart + batch_size]
+            chunk_s = [dataset.samples[i] for i in chunk_idx]
+            chunk_item = [dataset[i] for i in chunk_idx]
+            chunk_img = [Image.open(Path(args.data_root) / s.image_path).convert("RGB") for s in chunk_s]
+            msgs = []
+            for s, img in zip(chunk_s, chunk_img):
+                um = _generation_messages(s)
+                um[0]["content"][0]["image"] = img
+                msgs.append(um)
+            enc = wrapper.processor.apply_chat_template(
+                msgs,
+                tokenize=True,
+                padding=True,
                 add_generation_prompt=True,
+                return_tensors="pt",
+                return_dict=True,
+                processor_kwargs={
+                    "images_kwargs": {
+                        "max_pixels": args.max_pixels,
+                        "min_pixels": 56 * 56,
+                    }
+                },
             )
+            enc = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in enc.items()}
             input_len = enc["input_ids"].shape[1]
             out = wrapper.base.generate(
                 input_ids=enc["input_ids"],
@@ -229,116 +249,111 @@ def main() -> int:
                 do_sample=False,
                 use_cache=True,
             )
-            raw = wrapper.processor.decode(
-                out[0][input_len:], skip_special_tokens=False
-            )
-            assistant_text = (
-                raw.replace("<|im_start|>", "").replace("<|im_end|>", "").strip()
-            )
-            records = parse_generated_boxes_and_masks(assistant_text)
-            decoder_text = assistant_text
-            if records and assistant_text.count(MASK_TOKEN) == 0:
-                decoder_text = _inject_mask_placeholders(assistant_text)
-            row: dict[str, Any] = {
-                "sample_id": sample.sample_id,
-                "generated_text": assistant_text,
-                "num_records": len(records),
-                "bbox_2d": [r["bbox_2d"] for r in records],
-                "mask_tokens": decoder_text.count(MASK_TOKEN),
-            }
+            for b, (sample, item, image) in enumerate(zip(chunk_s, chunk_item, chunk_img)):
+                raw = wrapper.processor.decode(out[b][input_len:], skip_special_tokens=False)
+                assistant_text = raw.replace("<|im_start|>", "").replace("<|im_end|>", "").strip()
+                records = parse_generated_boxes_and_masks(assistant_text)
+                decoder_text = assistant_text
+                if records and assistant_text.count(MASK_TOKEN) == 0:
+                    decoder_text = _inject_mask_placeholders(assistant_text)
+                row: dict[str, Any] = {
+                    "sample_id": sample.sample_id,
+                    "generated_text": assistant_text,
+                    "num_records": len(records),
+                    "bbox_2d": [r["bbox_2d"] for r in records],
+                    "mask_tokens": decoder_text.count(MASK_TOKEN),
+                }
 
-            if records and decoder_text.count(MASK_TOKEN) == len(records):
-                full_messages = [
-                    user_msg[0],
-                    {"role": "assistant", "content": decoder_text},
-                ]
-                full_messages[0]["content"][0]["image"] = image
-                full = wrapper.processor.apply_chat_template(
-                    full_messages,
-                    tokenize=True,
-                    add_generation_prompt=False,
-                    return_tensors="pt",
-                    return_dict=True,
-                    processor_kwargs={
-                        "images_kwargs": {
-                            "max_pixels": args.max_pixels,
-                            "min_pixels": 56 * 56,
-                        }
-                    },
-                )
-                full = {
-                    k: (v.to(device) if torch.is_tensor(v) else v)
-                    for k, v in full.items()
-                }
-                grid = full["image_grid_thw"][0]
-                grid_h, grid_w = int(grid[1]), int(grid[2])
-                stride_h, stride_w = grid_h * 2, grid_w * 2
-                num = len(records)
-                boxes = torch.tensor(
-                    [[v / 1000.0 for v in r["bbox_2d"]] for r in records],
-                    dtype=torch.float32,
-                ).to(device)
-                masks = torch.zeros(num, stride_h, stride_w, dtype=torch.float32)
-                image_tensor = normalize_decoder_image(
-                    image, grid_h * 16, grid_w * 16
-                ).unsqueeze(0)
-                batch = {
-                    "input_ids": full["input_ids"],
-                    "attention_mask": full["attention_mask"],
-                    "mm_token_type_ids": full["mm_token_type_ids"],
-                    "pixel_values": full["pixel_values"],
-                    "image_grid_thw": full["image_grid_thw"],
-                    "boxes": boxes.unsqueeze(0),
-                    "masks": masks.unsqueeze(0).to(device),
-                    "num_instances": [num],
-                    "has_seg": True,
-                    "image": image_tensor.to(device),
-                }
-                out_dec = wrapper(batch)
-                logits = out_dec["mask_logits"][0]
-                preds = (torch.sigmoid(logits) > 0.5).float().cpu().numpy()
-                iou_preds = out_dec["iou_scores"][0].float().cpu().numpy()
-                gt = item["masks"].cpu().numpy()
-                pred_list = [preds[i] for i in range(num)]
-                gt_list = [np.asarray(gt[j]) for j in range(gt.shape[0])]
-                pred_idx, gt_idx, total = match_masks(pred_list, gt_list)
-                matched_ious: list[float] = []
-                for pj, gj in zip(pred_idx, gt_idx):
-                    iou = float(
-                        mask_iou(
-                            np.expand_dims(pred_list[pj], 0),
-                            np.expand_dims(gt_list[gj], 0),
+                if records and decoder_text.count(MASK_TOKEN) == len(records):
+                    user_msg = _generation_messages(sample)
+                    user_msg[0]["content"][0]["image"] = image
+                    full_messages = [
+                        user_msg[0],
+                        {"role": "assistant", "content": decoder_text},
+                    ]
+                    full = wrapper.processor.apply_chat_template(
+                        full_messages,
+                        tokenize=True,
+                        add_generation_prompt=False,
+                        return_tensors="pt",
+                        return_dict=True,
+                        processor_kwargs={
+                            "images_kwargs": {
+                                "max_pixels": args.max_pixels,
+                                "min_pixels": 56 * 56,
+                            }
+                        },
+                    )
+                    full = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in full.items()}
+                    grid = full["image_grid_thw"][0]
+                    grid_h, grid_w = int(grid[1]), int(grid[2])
+                    stride_h, stride_w = grid_h * 2, grid_w * 2
+                    num = len(records)
+                    boxes = torch.tensor(
+                        [[v / 1000.0 for v in r["bbox_2d"]] for r in records],
+                        dtype=torch.float32,
+                    ).to(device)
+                    masks = torch.zeros(num, stride_h, stride_w, dtype=torch.float32)
+                    image_tensor = normalize_decoder_image(
+                        image, grid_h * 16, grid_w * 16
+                    ).unsqueeze(0)
+                    batch = {
+                        "input_ids": full["input_ids"],
+                        "attention_mask": full["attention_mask"],
+                        "mm_token_type_ids": full["mm_token_type_ids"],
+                        "pixel_values": full["pixel_values"],
+                        "image_grid_thw": full["image_grid_thw"],
+                        "boxes": boxes.unsqueeze(0),
+                        "masks": masks.unsqueeze(0).to(device),
+                        "num_instances": [num],
+                        "has_seg": True,
+                        "image": image_tensor.to(device),
+                    }
+                    out_dec = wrapper(batch)
+                    logits = out_dec["mask_logits"][0]
+                    preds = (torch.sigmoid(logits) > 0.5).float().cpu().numpy()
+                    iou_preds = out_dec["iou_scores"][0].float().cpu().numpy()
+                    gt = item["masks"].cpu().numpy()
+                    pred_list = [preds[i] for i in range(num)]
+                    gt_list = [np.asarray(gt[j]) for j in range(gt.shape[0])]
+                    pred_idx, gt_idx, total = match_masks(pred_list, gt_list)
+                    matched_ious: list[float] = []
+                    for pj, gj in zip(pred_idx, gt_idx):
+                        iou = float(
+                            mask_iou(
+                                np.expand_dims(pred_list[pj], 0),
+                                np.expand_dims(gt_list[gj], 0),
+                            )
                         )
-                    )
-                    matched_ious.append(iou)
-                    inter = np.logical_and(pred_list[pj] > 0, gt_list[gj] > 0).sum()
-                    union = np.logical_or(pred_list[pj] > 0, gt_list[gj] > 0).sum()
-                    sum_inter += float(inter)
-                    sum_union += float(union)
-                all_ious.extend(matched_ious)
-                strict_correct += sum(1 for iou in matched_ious if iou >= 0.5)
-                strict_total += len(gt_list)
-                strict = total / max(len(gt_list), 1)
-                row["mask_ious"] = matched_ious
-                row["iou_scores"] = [float(v) for v in iou_preds]
-                row["miou"] = strict
-                strict_values.append(strict)
-                if save_viz:
-                    _save_mask_viz(
-                        image,
-                        preds[0],
-                        records[0]["bbox_2d"],
-                        gt,
-                        item["boxes"].detach().cpu().numpy(),
-                        output_dir / "viz" / f"{sample.sample_id}_cmp.png",
-                    )
-            else:
-                row["miou"] = 0.0
-                row["mask_ious"] = []
-                strict_values.append(0.0)
+                        matched_ious.append(iou)
+                        inter = np.logical_and(pred_list[pj] > 0, gt_list[gj] > 0).sum()
+                        union = np.logical_or(pred_list[pj] > 0, gt_list[gj] > 0).sum()
+                        sum_inter += float(inter)
+                        sum_union += float(union)
+                    all_ious.extend(matched_ious)
+                    strict_correct += sum(1 for iou in matched_ious if iou >= 0.5)
+                    strict_total += len(gt_list)
+                    strict = total / max(len(gt_list), 1)
+                    row["mask_ious"] = matched_ious
+                    row["iou_scores"] = [float(v) for v in iou_preds]
+                    row["miou"] = strict
+                    strict_values.append(strict)
+                    if save_viz:
+                        _save_mask_viz(
+                            image,
+                            preds[0],
+                            records[0]["bbox_2d"],
+                            gt,
+                            item["boxes"].detach().cpu().numpy(),
+                            output_dir / "viz" / f"{sample.sample_id}_cmp.png",
+                        )
+                else:
+                    row["miou"] = 0.0
+                    row["mask_ious"] = []
+                    strict_values.append(0.0)
 
-            results.append(row)
-            print(json.dumps(row, ensure_ascii=False), flush=True)
+                results.append(row)
+                print(json.dumps(row, ensure_ascii=False), flush=True)
 
     with out_path.open("w", encoding="utf-8") as f:
         for row in results:
