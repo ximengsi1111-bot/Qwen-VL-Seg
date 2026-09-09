@@ -8,8 +8,8 @@ from qwen3vl_seg.model.prompt_format import build_user_prompt
 from qwen3vl_seg.model.prompt_parser import parse_generated_boxes_and_masks
 
 BASE = "/mingli01/data/xyk/model/grpo-policy"
-ADAPTER = "/mingli01/data/xyk/grpo/smoke_out/v5-20260906-122205/checkpoint-64"
-DATA = "/mingli01/data/xyk/grpo/rl_smoke.jsonl"
+ADAPTER = os.environ.get("GRPO_ADAPTER", "/mingli01/data/xyk/grpo/train_out/v0-20260908-124037/checkpoint-1000")
+DATA = "/mingli01/data/xyk/grpo/rl_eval.jsonl"
 MAX_PIXELS = 1048576
 DEVICE = "cuda"
 
@@ -68,4 +68,4 @@ m0, p0 = load(None)
 eval_iou(m0, p0, samples, "baseline(no GRPO)")
 # with GRPO adapter
 m1, p1 = load(ADAPTER)
-eval_iou(m1, p1, samples, "grpo adapter")
+eval_iou(m1, p1, samples, "grpo adapter %s" % os.path.basename(ADAPTER))
