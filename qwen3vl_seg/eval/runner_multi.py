@@ -43,6 +43,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--shard-size", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--use-bucket", action="store_true")
+    parser.add_argument("--resume-done", default="")
     parser.add_argument("--bucket-sizes", default="256,384,512,640,768")
 
     return parser.parse_args()
@@ -206,6 +207,19 @@ def main() -> int:
     if save_viz:
         (output_dir / "viz").mkdir(parents=True, exist_ok=True)
     out_path = output_dir / f"predictions.rank{shard_rank}.jsonl"
+    done_ids: set = set()
+    if args.resume_done and Path(args.resume_done).exists():
+        with open(args.resume_done, encoding="utf-8") as _rf:
+            for _line in _rf:
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    done_ids.add(json.loads(_line)["sample_id"])
+                except Exception:
+                    continue
+        print(f"[runner_multi] resume: skipping {len(done_ids)} done samples", flush=True)
+    out_fh = out_path.open("w", encoding="utf-8")
     results: list[dict[str, Any]] = []
     all_ious: list[float] = []
     sum_inter = 0.0
@@ -435,12 +449,16 @@ def main() -> int:
                     row["mask_ious"] = []
                     strict_values.append(0.0)
                 results.append(row)
+                out_fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+                out_fh.flush()
                 print(json.dumps(row, ensure_ascii=False), flush=True)
 
     with torch.inference_mode():
         total = len(dataset)
         limit = args.max_samples if args.max_samples > 0 else total
         sample_indices = list(range(shard_rank, min(limit, total), shard_size))
+        if done_ids:
+            sample_indices = [i for i in sample_indices if dataset.samples[i].sample_id not in done_ids]
         batch_size = max(1, int(args.batch_size))
         if args.use_bucket:
             from qwen3vl_seg.data.buckets import choose_bucket
@@ -456,9 +474,7 @@ def main() -> int:
             for bstart in range(0, len(sample_indices), batch_size):
                 process_group(sample_indices[bstart:bstart + batch_size], None)
 
-    with out_path.open("w", encoding="utf-8") as f:
-        for row in results:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    out_fh.close()
 
     n_samples = len(results)
     partial = {
