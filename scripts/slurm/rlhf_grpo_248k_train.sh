@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=12:00:00
+#SBATCH --time=72:00:00
 #SBATCH --job-name=qvlseg-grpo248k-train
 #SBATCH --output=/mingli01/data/xyk/grpo/train248k.out
 #SBATCH --error=/mingli01/data/xyk/grpo/train248k.err
@@ -33,7 +33,7 @@ python qwen3vl_seg/grpo/run_rlhf.py \
   --learning_rate 2e-5 \
   --per_device_train_batch_size 2 \
   --num_ppo_epochs 1 \
-  --max_steps 1000 \
+  --max_epochs 1 \
   --report_to none \
   --output_dir /mingli01/data/xyk/grpo/train248k_out
 echo DONE
