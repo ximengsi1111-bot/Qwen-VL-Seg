@@ -73,7 +73,8 @@ class SegIoUReward(ORM):
                 peft_model = PeftModel.from_pretrained(wrapper.base, _GRPO_ADAPTER)
                 wrapper.base = peft_model.merge_and_unload()
                 print(f"[SegIoUReward] merged adapter: {_GRPO_ADAPTER}", flush=True)
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+            device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
             wrapper.to(device, dtype=torch.bfloat16)
             wrapper.eval()
             self._wrapper = wrapper
