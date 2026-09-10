@@ -40,7 +40,7 @@ def _box_iou(a, b):
     return inter / (ua + ub - inter) if (ua + ub - inter) > 0 else 0.0
 
 
-_STAGE2_CKPT = "/file_storage01/home/mingli/data/xyk/checkpoints/small/stage2-100k"
+_STAGE2_CKPT = os.environ.get("GRPO_STAGE2", "/file_storage01/home/mingli/data/xyk/checkpoints/small/stage2-100k")
 # Base for the seg wrapper = the GRPO policy base (SFT policy). The stage2 mask
 # decoder is loaded on top via _load_stage2.
 _BASE_MODEL = os.environ.get("GRPO_BASE", "/mingli01/data/xyk/model/grpo-policy")
