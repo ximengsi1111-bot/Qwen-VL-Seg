@@ -24,6 +24,7 @@ import numpy as np
 from typing import Any
 from PIL import Image
 import torch
+import torch.nn.functional as F
 
 from swift.rewards.orm import ORM
 
@@ -48,6 +49,7 @@ _BASE_MODEL = os.environ.get("GRPO_BASE", "/mingli01/data/xyk/model/grpo-policy"
 _GRPO_ADAPTER = os.environ.get("GRPO_ADAPTER", "")
 # Same image/mask resolution as the formal eval (runner_multi --max-pixels).
 _MAX_PIXELS = int(os.environ.get("GRPO_MAX_PIXELS", "262144"))
+_REWARD_BATCH = os.environ.get("GRPO_REWARD_BATCH", "1") != "0"
 
 
 class SegIoUReward(ORM):
@@ -58,6 +60,7 @@ class SegIoUReward(ORM):
         self.box_weight = float(kwargs.get("box_weight", 0.5))
         self.mask_weight = float(kwargs.get("mask_weight", 0.5))
         self._wrapper = None
+        self._batch_warned = False
 
     # ---- lazy model (base + decoder) for mask IoU ---------------
     def _get_wrapper(self):
@@ -106,24 +109,48 @@ class SegIoUReward(ORM):
 
     # ---- reward --------------------------------------------------
     def __call__(self, completions, solution, **kwargs):
-        rewards = []
         messages = kwargs.get("messages")
-        for i, (comp, sol) in enumerate(zip(completions, solution)):
-            gt = self._parse_solution(sol)
-            pred_boxes = self._parse_completion(comp)
-            gt_boxes = gt.get("bbox_1000", [])
-            box_iou = 0.0
-            if gt_boxes and pred_boxes:
-                box_iou = max(_box_iou(p, g) for p in pred_boxes for g in gt_boxes)
-            mask_iou = 0.0
-            if self.mask_weight > 0.0:
+        n = len(completions)
+        gts = [self._parse_solution(sol) for sol in solution]
+        pred_boxes = [self._parse_completion(comp) for comp in completions]
+        box_ious = []
+        for i in range(n):
+            gt_boxes = gts[i].get("bbox_1000", [])
+            preds = pred_boxes[i]
+            box_ious.append(max(_box_iou(p, g) for p in preds for g in gt_boxes) if gt_boxes and preds else 0.0)
+
+        mask_ious = [0.0] * n
+        if self.mask_weight > 0.0:
+            msgs_list = [self._messages_at(messages, i) for i in range(n)]
+            if _REWARD_BATCH and n > 1:
                 try:
-                    msgs = messages[i] if messages is not None else None
-                    mask_iou = self._mask_iou(comp, gt, msgs)
-                except Exception:
-                    mask_iou = 0.0
-            rewards.append(self.box_weight * box_iou + self.mask_weight * mask_iou)
-        return rewards
+                    mask_ious = self._mask_iou_batch(completions, gts, msgs_list)
+                except Exception as exc:
+                    if not self._batch_warned:
+                        print(f"[SegIoUReward] batch mask decode failed, falling back: {exc}", flush=True)
+                        self._batch_warned = True
+                    mask_ious = [0.0] * n
+                    for i in range(n):
+                        try:
+                            mask_ious[i] = self._mask_iou(completions[i], gts[i], msgs_list[i])
+                        except Exception:
+                            mask_ious[i] = 0.0
+            else:
+                for i in range(n):
+                    try:
+                        mask_ious[i] = self._mask_iou(completions[i], gts[i], msgs_list[i])
+                    except Exception:
+                        mask_ious[i] = 0.0
+
+        return [self.box_weight * box_ious[i] + self.mask_weight * mask_ious[i] for i in range(n)]
+
+    def _messages_at(self, messages, i):
+        if messages is None:
+            return None
+        try:
+            return messages[i]
+        except Exception:
+            return None
 
     def _mask_iou(self, comp, gt, sample_messages):
         """Run the frozen decoder to get a predicted mask, scored like the formal eval.
@@ -217,3 +244,176 @@ class SegIoUReward(ORM):
         gt_list = [np.asarray(g, dtype=np.uint8) for g in gt_masks]
         pred_idx, gt_idx, total = match_masks(pred_list, gt_list)
         return float(total / max(len(gt_list), 1))
+
+    def _mask_iou_batch(self, comps, gts, msgs_list):
+        """Batch the frozen decoder forward for completions sharing image/GT."""
+        from collections import defaultdict
+        from qwen3vl_seg.model.prompt_format import MASK_TOKEN
+        from qwen3vl_seg.eval.runner import _inject_mask_placeholders, parse_generated_boxes_and_masks
+        from qwen3vl_seg.data.dataset import normalize_decoder_image
+
+        wrapper = self._get_wrapper()
+        processor = wrapper.processor
+        device = wrapper.base.device
+        prepared = []
+        out = [0.0] * len(comps)
+
+        for i, (comp, gt, sample_messages) in enumerate(zip(comps, gts, msgs_list)):
+            records = parse_generated_boxes_and_masks(comp)
+            if not records:
+                continue
+            decoder_text = comp
+            if comp.count(MASK_TOKEN) == 0:
+                decoder_text = _inject_mask_placeholders(comp)
+            if decoder_text.count(MASK_TOKEN) != len(records):
+                continue
+
+            if sample_messages:
+                msgs = [dict(message) for message in sample_messages]
+                for m in msgs:
+                    if m.get("role") == "assistant":
+                        m["content"] = decoder_text
+                    if m.get("role") == "user" and isinstance(m.get("content"), list):
+                        for c in m["content"]:
+                            if c.get("type") == "image":
+                                c["image"] = Image.open(gt["image_path"]).convert("RGB")
+            else:
+                user_text = "Locate and segment the object, report bbox and mask in JSON."
+                msgs = [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": Image.open(gt["image_path"]).convert("RGB")},
+                        {"type": "text", "text": user_text},
+                    ],
+                }, {"role": "assistant", "content": decoder_text}]
+
+            enc = processor.apply_chat_template(
+                msgs, tokenize=True, add_generation_prompt=False,
+                return_tensors="pt", return_dict=True,
+                processor_kwargs={"images_kwargs": {"max_pixels": _MAX_PIXELS, "min_pixels": 56 * 56}},
+            )
+            enc = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in enc.items()}
+            grid = enc["image_grid_thw"][0]
+            grid_h, grid_w = int(grid[1]), int(grid[2])
+            boxes = torch.tensor(
+                [[v / 1000.0 for v in r["bbox_2d"]] for r in records],
+                dtype=torch.float32,
+            ).to(device)
+            image_tensor = normalize_decoder_image(
+                Image.open(gt["image_path"]).convert("RGB"), grid_h * 16, grid_w * 16
+            ).unsqueeze(0).to(device)
+            key = (str(gt.get("image_path", "")), tuple(gt.get("mask_paths", [])), grid_h, grid_w)
+            prepared.append({
+                "idx": i,
+                "key": key,
+                "gt": gt,
+                "comp": comp,
+                "msgs": sample_messages,
+                "enc": enc,
+                "grid_h": grid_h,
+                "grid_w": grid_w,
+                "boxes": boxes,
+                "image": image_tensor,
+            })
+
+        groups = defaultdict(list)
+        for item in prepared:
+            groups[item["key"]].append(item)
+
+        for group in groups.values():
+            try:
+                scores = self._score_mask_group(group)
+            except Exception as exc:
+                if not self._batch_warned:
+                    print(f"[SegIoUReward] batch group decode failed, falling back: {exc}", flush=True)
+                    self._batch_warned = True
+                scores = {}
+                for item in group:
+                    try:
+                        scores[item["idx"]] = self._mask_iou(item["comp"], item["gt"], item["msgs"])
+                    except Exception:
+                        scores[item["idx"]] = 0.0
+            for idx, score in scores.items():
+                out[idx] = float(score)
+        return out
+
+    def _load_gt_masks(self, gt, stride_h, stride_w):
+        gt_masks = []
+        for mask_rel in gt.get("mask_paths", []):
+            with Image.open(mask_rel) as mh:
+                m = mh.convert("L").resize((stride_w, stride_h), Image.BILINEAR)
+            gt_masks.append(np.asarray(m, dtype=np.uint8))
+        return gt_masks
+
+    def _score_mask_group(self, group):
+        from qwen3vl_seg.eval.metrics import match_masks
+
+        wrapper = self._get_wrapper()
+        device = wrapper.base.device
+        encs = [item["enc"] for item in group]
+        max_len = max(e["input_ids"].shape[1] for e in encs)
+
+        def _pad(key_, padval):
+            return torch.stack([
+                F.pad(e[key_].detach().squeeze(0), (max_len - e[key_].shape[1], 0), value=padval)
+                for e in encs
+            ], dim=0).to(device)
+
+        input_ids = _pad("input_ids", 0)
+        attention_mask = _pad("attention_mask", 0)
+        mm_token_type_ids = _pad("mm_token_type_ids", 0)
+        pixel_values = torch.cat([e["pixel_values"].detach() for e in encs], dim=0).to(device)
+        image_grid_thw = torch.stack([e["image_grid_thw"][0].detach() for e in encs], dim=0).to(device)
+
+        max_inst = max(item["boxes"].shape[0] for item in group)
+        boxes_list = []
+        masks_list = []
+        image_list = []
+        num_instances = []
+        for item in group:
+            num = item["boxes"].shape[0]
+            boxes = item["boxes"]
+            if num < max_inst:
+                boxes = torch.cat([
+                    boxes,
+                    torch.zeros(max_inst - num, 4, dtype=boxes.dtype, device=device),
+                ], dim=0)
+            boxes_list.append(boxes)
+            masks_list.append(torch.zeros(
+                num, item["grid_h"] * 2, item["grid_w"] * 2,
+                dtype=torch.float32, device=device,
+            ))
+            image_list.append(item["image"].squeeze(0))
+            num_instances.append(num)
+
+        batch = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "mm_token_type_ids": mm_token_type_ids,
+            "pixel_values": pixel_values,
+            "image_grid_thw": image_grid_thw,
+            "boxes": torch.stack(boxes_list, dim=0),
+            "masks": masks_list,
+            "num_instances": num_instances,
+            "has_seg": [True] * len(group),
+            "image": image_list,
+        }
+        with torch.no_grad():
+            out_dec = wrapper(batch)
+
+        logits_all = out_dec["mask_logits"]
+        stride_h = int(group[0]["grid_h"]) * 2
+        stride_w = int(group[0]["grid_w"]) * 2
+        gt_masks = self._load_gt_masks(group[0]["gt"], stride_h, stride_w)
+        if not gt_masks:
+            return {item["idx"]: 0.0 for item in group}
+
+        gt_list = [np.asarray(g, dtype=np.uint8) for g in gt_masks]
+        scores = {}
+        for j, item in enumerate(group):
+            num = item["boxes"].shape[0]
+            preds = (torch.sigmoid(logits_all[j][:num]) > 0.5).float().cpu().numpy()
+            pred_list = [preds[k] for k in range(num)]
+            _, _, total = match_masks(pred_list, gt_list)
+            scores[item["idx"]] = float(total / max(len(gt_list), 1))
+        return scores
