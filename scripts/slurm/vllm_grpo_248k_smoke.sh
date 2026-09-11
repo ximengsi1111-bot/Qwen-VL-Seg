@@ -39,6 +39,7 @@ SAVE_STEPS=${SAVE_STEPS:-200}
 SAVE_TOTAL_LIMIT=${SAVE_TOTAL_LIMIT:-5}
 RESUME_FROM_CHECKPOINT=${RESUME_FROM_CHECKPOINT:-}
 LOAD_ARGS=${LOAD_ARGS:-true}
+RESUME_ONLY_MODEL=${RESUME_ONLY_MODEL:-false}
 RESUME_ARGS=()
 if [ -n "$RESUME_FROM_CHECKPOINT" ]; then
   RESUME_ARGS+=(--resume_from_checkpoint "$RESUME_FROM_CHECKPOINT")
@@ -58,6 +59,7 @@ python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" --master_port
   --num_ppo_epochs 1 \
   --max_steps "$MAX_STEPS" \
   --load_args "$LOAD_ARGS" \
+  --resume_only_model "$RESUME_ONLY_MODEL" \
   --save_strategy steps \
   --save_steps "$SAVE_STEPS" \
   --save_total_limit "$SAVE_TOTAL_LIMIT" \
