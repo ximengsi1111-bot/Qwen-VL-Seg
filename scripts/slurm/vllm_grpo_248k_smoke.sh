@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --partition=gre
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:4
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=128G
+#SBATCH --gres=gpu:6
+#SBATCH --cpus-per-task=48
+#SBATCH --mem=192G
 #SBATCH --time=01:00:00
 #SBATCH --job-name=qvlseg-vllm-grpo-smoke
 #SBATCH --output=/mingli01/data/xyk/grpo/vllm_grpo_smoke_%j.out
@@ -13,6 +13,7 @@ export PYTHONNOUSERSITE=1
 export OMP_NUM_THREADS=8
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export MASTER_PORT=${MASTER_PORT:-29601}
+export NPROC_PER_NODE=${NPROC_PER_NODE:-6}
 export PATH=/mingli01/data/xyk/conda/vllm-qwen3vl/bin:$PATH
 cd /mingli01/project/xiyongkai/qwen3vl-seg-vllm
 export PYTHONPATH=.
@@ -30,12 +31,12 @@ export GRPO_STAGE2=/mingli01/data/xyk/checkpoints/small/stage2-248k
 export GRPO_MAX_PIXELS=589824
 DATASET=${DATASET:-/mingli01/data/xyk/grpo/rl_hard_70k.jsonl}
 NUM_GENERATIONS=${NUM_GENERATIONS:-4}
-GEN_BATCH=${GEN_BATCH:-64}
+GEN_BATCH=${GEN_BATCH:-96}
 PER_DEVICE_BATCH=${PER_DEVICE_BATCH:-16}
 MAX_STEPS=${MAX_STEPS:-10}
-OUT_DIR=${OUT_DIR:-/mingli01/data/xyk/grpo/train248k_vllm_70k_pd16_smoke}
+OUT_DIR=${OUT_DIR:-/mingli01/data/xyk/grpo/train248k_vllm_70k_pd16_g6_smoke}
 
-python -m torch.distributed.run --nproc_per_node=4 --master_port="$MASTER_PORT" qwen3vl_seg/grpo/run_rlhf.py \
+python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" --master_port="$MASTER_PORT" qwen3vl_seg/grpo/run_rlhf.py \
   --model /mingli01/data/xyk/model/grpo-policy-248k \
   --model_type qwen3_vl \
   --dataset "$DATASET" \
