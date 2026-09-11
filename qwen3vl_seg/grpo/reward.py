@@ -127,7 +127,12 @@ class SegIoUReward(ORM):
                     mask_ious = self._mask_iou_batch(completions, gts, msgs_list)
                 except Exception as exc:
                     if not self._batch_warned:
-                        print(f"[SegIoUReward] batch mask decode failed, falling back: {exc}", flush=True)
+                        import traceback
+                        print(
+                            f"[SegIoUReward] batch mask decode failed, falling back: {exc}\n"
+                            f"{traceback.format_exc()}",
+                            flush=True,
+                        )
                         self._batch_warned = True
                     mask_ious = [0.0] * n
                     for i in range(n):
@@ -287,11 +292,14 @@ class SegIoUReward(ORM):
                     ],
                 }, {"role": "assistant", "content": decoder_text}]
 
-            enc = processor.apply_chat_template(
-                msgs, tokenize=True, add_generation_prompt=False,
-                return_tensors="pt", return_dict=True,
-                processor_kwargs={"images_kwargs": {"max_pixels": _MAX_PIXELS, "min_pixels": 56 * 56}},
-            )
+            try:
+                enc = processor.apply_chat_template(
+                    msgs, tokenize=True, add_generation_prompt=False,
+                    return_tensors="pt", return_dict=True,
+                    processor_kwargs={"images_kwargs": {"max_pixels": _MAX_PIXELS, "min_pixels": 56 * 56}},
+                )
+            except Exception:
+                continue
             enc = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in enc.items()}
             if not bool(enc["mm_token_type_ids"].any().item()):
                 continue
