@@ -66,6 +66,7 @@ python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" --master_port
   --per_device_train_batch_size "$PER_DEVICE_BATCH" \
   --num_ppo_epochs 1 \
   --max_epochs 1 \
+  --num_train_epochs 1 \
   --load_args "$LOAD_ARGS" \
   --resume_only_model "$RESUME_ONLY_MODEL" \
   --save_strategy steps \
