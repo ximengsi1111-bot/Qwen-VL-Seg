@@ -295,7 +295,13 @@ class SegIoUReward(ORM):
             enc = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in enc.items()}
             if not bool(enc["mm_token_type_ids"].any().item()):
                 continue
-            grid = enc["image_grid_thw"][0]
+            grid_thw = enc.get("image_grid_thw")
+            pixel_values = enc.get("pixel_values")
+            if grid_thw is None or not torch.is_tensor(grid_thw) or grid_thw.numel() < 3:
+                continue
+            if pixel_values is None or (torch.is_tensor(pixel_values) and pixel_values.numel() == 0):
+                continue
+            grid = grid_thw[0]
             grid_h, grid_w = int(grid[1]), int(grid[2])
             boxes = torch.tensor(
                 [[v / 1000.0 for v in r["bbox_2d"]] for r in records],
