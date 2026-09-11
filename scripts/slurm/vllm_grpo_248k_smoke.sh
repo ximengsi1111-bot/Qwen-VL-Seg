@@ -38,6 +38,7 @@ OUT_DIR=${OUT_DIR:-/mingli01/data/xyk/grpo/train248k_vllm_70k_pd16_g6_cpu16_smok
 SAVE_STEPS=${SAVE_STEPS:-200}
 SAVE_TOTAL_LIMIT=${SAVE_TOTAL_LIMIT:-5}
 RESUME_FROM_CHECKPOINT=${RESUME_FROM_CHECKPOINT:-}
+LOAD_ARGS=${LOAD_ARGS:-true}
 RESUME_ARGS=()
 if [ -n "$RESUME_FROM_CHECKPOINT" ]; then
   RESUME_ARGS+=(--resume_from_checkpoint "$RESUME_FROM_CHECKPOINT")
@@ -56,6 +57,7 @@ python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" --master_port
   --per_device_train_batch_size "$PER_DEVICE_BATCH" \
   --num_ppo_epochs 1 \
   --max_steps "$MAX_STEPS" \
+  --load_args "$LOAD_ARGS" \
   --save_strategy steps \
   --save_steps "$SAVE_STEPS" \
   --save_total_limit "$SAVE_TOTAL_LIMIT" \
