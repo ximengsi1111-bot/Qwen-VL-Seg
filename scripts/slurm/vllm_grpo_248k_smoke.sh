@@ -2,7 +2,7 @@
 #SBATCH --partition=gre
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:6
-#SBATCH --cpus-per-task=48
+#SBATCH --cpus-per-task=16
 #SBATCH --mem=192G
 #SBATCH --time=01:00:00
 #SBATCH --job-name=qvlseg-vllm-grpo-smoke
@@ -10,7 +10,7 @@
 #SBATCH --error=/mingli01/data/xyk/grpo/vllm_grpo_smoke_%j.err
 set -e
 export PYTHONNOUSERSITE=1
-export OMP_NUM_THREADS=8
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export MASTER_PORT=${MASTER_PORT:-29601}
 export NPROC_PER_NODE=${NPROC_PER_NODE:-6}
@@ -34,7 +34,7 @@ NUM_GENERATIONS=${NUM_GENERATIONS:-4}
 GEN_BATCH=${GEN_BATCH:-96}
 PER_DEVICE_BATCH=${PER_DEVICE_BATCH:-16}
 MAX_STEPS=${MAX_STEPS:-10}
-OUT_DIR=${OUT_DIR:-/mingli01/data/xyk/grpo/train248k_vllm_70k_pd16_g6_smoke}
+OUT_DIR=${OUT_DIR:-/mingli01/data/xyk/grpo/train248k_vllm_70k_pd16_g6_cpu16_smoke}
 
 python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" --master_port="$MASTER_PORT" qwen3vl_seg/grpo/run_rlhf.py \
   --model /mingli01/data/xyk/model/grpo-policy-248k \
