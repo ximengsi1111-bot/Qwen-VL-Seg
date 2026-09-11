@@ -95,17 +95,33 @@ commit `7d61116` 已修复 vLLM 路径下的 batch mask reward 回退：
 说明 reward 回退不是当前 vLLM 路径的主要瓶颈；当前瓶颈更可能在 vLLM rollout、
 LoRA 权重同步和 colocate sleep/wake。
 
-## 与 72h 一个 epoch 的关系
+## 70k + G=4 + generation_batch_size=64
 
-在 `gen_batch=32` 下，每步 4 个 prompt，105135 个 prompt 约需 26284 步：
+推荐正式训练配置：
 
 ```text
-26284 × 21.94s ≈ 576,000s ≈ 160h
+dataset: /mingli01/data/xyk/grpo/rl_hard_70k.jsonl
+num_generations: 4
+generation_batch_size: 64
+per_device_train_batch_size: 8
+world_size: 4
+steps_per_generation: 2
 ```
 
-仍超过 72h。若目标是 72h 内跑完一个 epoch，还需要：
+验证结果：
 
-- 继续增大 generation batch（8/16 prompts per step）；
-- 减少 `num_generations`；
-- 使用数据子集；
-- 或增加 GPU 数。
+- Job：`101685`
+- `10/10` 完成，保存 `checkpoint-10`
+- 显存：约 `59.38 GiB/GPU`
+- 稳定约 `19.08s/step`
+- 10 步总耗时：`221.4s`
+- 无 batch mask reward fallback
+
+训练时间估算：
+
+```text
+70,090 prompts / 8 prompts per step ≈ 8,762 steps/epoch
+8,762 × 19.08s ≈ 167,200s ≈ 46.4h
+```
+
+已经低于 72h，比原来的 `G=8 + gen_batch=32` 配置明显更快。
