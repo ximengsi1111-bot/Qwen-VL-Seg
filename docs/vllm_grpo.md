@@ -125,3 +125,26 @@ steps_per_generation: 2
 ```
 
 已经低于 72h，比原来的 `G=8 + gen_batch=32` 配置明显更快。
+
+## per_device_train_batch_size=16 结果
+
+在 `70k + G=4 + gen_batch=64` 基础上，把 `per_device_train_batch_size` 从 8 调到 16：
+
+- Job：`101697`
+- `10/10` 完成，保存 `checkpoint-10`
+- 显存：`68.13 GiB/GPU`
+- 稳定 step_time：约 `27–31s`
+- 10 步总耗时：`652s`（包含首次 TorchInductor 编译约 6–7 分钟）
+- 无 batch mask reward fallback
+
+训练时间估算：
+
+```text
+每个 step 16 prompts
+70,090 / 16 ≈ 4,381 steps/epoch
+4,381 × 29s ≈ 127,000s ≈ 35.3h
+```
+
+按 `31s/step` 估算约为 `37.7h`。首步编译时间在完整 epoch 训练中可忽略。
+
+结论：`per_device_train_batch_size=16` 比 8 的约 46h 更快，推荐作为正式训练默认配置。

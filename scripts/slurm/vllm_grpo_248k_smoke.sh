@@ -31,9 +31,9 @@ export GRPO_MAX_PIXELS=589824
 DATASET=${DATASET:-/mingli01/data/xyk/grpo/rl_hard_70k.jsonl}
 NUM_GENERATIONS=${NUM_GENERATIONS:-4}
 GEN_BATCH=${GEN_BATCH:-64}
-PER_DEVICE_BATCH=${PER_DEVICE_BATCH:-8}
+PER_DEVICE_BATCH=${PER_DEVICE_BATCH:-16}
 MAX_STEPS=${MAX_STEPS:-10}
-OUT_DIR=${OUT_DIR:-/mingli01/data/xyk/grpo/train248k_vllm_70k_smoke}
+OUT_DIR=${OUT_DIR:-/mingli01/data/xyk/grpo/train248k_vllm_70k_pd16_smoke}
 
 python -m torch.distributed.run --nproc_per_node=4 --master_port="$MASTER_PORT" qwen3vl_seg/grpo/run_rlhf.py \
   --model /mingli01/data/xyk/model/grpo-policy-248k \
