@@ -35,6 +35,13 @@ GEN_BATCH=${GEN_BATCH:-96}
 PER_DEVICE_BATCH=${PER_DEVICE_BATCH:-16}
 MAX_STEPS=${MAX_STEPS:-10}
 OUT_DIR=${OUT_DIR:-/mingli01/data/xyk/grpo/train248k_vllm_70k_pd16_g6_cpu16_smoke}
+SAVE_STEPS=${SAVE_STEPS:-200}
+SAVE_TOTAL_LIMIT=${SAVE_TOTAL_LIMIT:-5}
+RESUME_FROM_CHECKPOINT=${RESUME_FROM_CHECKPOINT:-}
+RESUME_ARGS=()
+if [ -n "$RESUME_FROM_CHECKPOINT" ]; then
+  RESUME_ARGS+=(--resume_from_checkpoint "$RESUME_FROM_CHECKPOINT")
+fi
 
 python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" --master_port="$MASTER_PORT" qwen3vl_seg/grpo/run_rlhf.py \
   --model /mingli01/data/xyk/model/grpo-policy-248k \
@@ -49,6 +56,10 @@ python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" --master_port
   --per_device_train_batch_size "$PER_DEVICE_BATCH" \
   --num_ppo_epochs 1 \
   --max_steps "$MAX_STEPS" \
+  --save_strategy steps \
+  --save_steps "$SAVE_STEPS" \
+  --save_total_limit "$SAVE_TOTAL_LIMIT" \
+  "${RESUME_ARGS[@]}" \
   --use_vllm true \
   --vllm_mode colocate \
   --vllm_tensor_parallel_size 1 \
