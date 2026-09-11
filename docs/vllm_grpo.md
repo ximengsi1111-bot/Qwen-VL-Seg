@@ -184,3 +184,21 @@ optimizer momentum、scheduler 和 RNG 会重置，不是 bit-exact resume。
 ```
 
 然后用新的 checkpoint 做一次“optimizer + scheduler + RNG”完整 resume 验证。
+
+## 完整 optimizer resume 测试结论
+
+尝试用 `adamw_torch` checkpoint-2 做 `resume_only_model=false` 的完整恢复：
+
+- checkpoint、optimizer 状态都能加载
+- 但恢复后长时间停在首步，显存约 74 GiB，日志超过 10 分钟无更新
+- 该路径在当前 ms-swift + vLLM + Qwen3-VL 栈下不可用
+
+因此当前正式训练统一采用安全续训路径：
+
+```text
+RESUME_FROM_CHECKPOINT=<checkpoint>
+RESUME_ONLY_MODEL=true
+```
+
+两个启动脚本现在在设置了 `RESUME_FROM_CHECKPOINT` 且未显式指定时，会自动把
+`RESUME_ONLY_MODEL` 设为 `true`。这样会恢复 adapter 权重，但重置 optimizer/scheduler/RNG。
