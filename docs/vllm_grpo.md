@@ -148,3 +148,39 @@ steps_per_generation: 2
 按 `31s/step` 估算约为 `37.7h`。首步编译时间在完整 epoch 训练中可忽略。
 
 结论：`per_device_train_batch_size=16` 比 8 的约 46h 更快，推荐作为正式训练默认配置。
+
+## 断点续训 smoke
+
+测试结果：
+
+- Job：`102014`
+- 从 `checkpoint-10` 续训到 `global_step 12/12`
+- 新 checkpoint：`checkpoint-12`
+- `resume_only_model=true`
+- 显存：`65.69 GiB/GPU`
+- 无 optimizer dtype 错误
+
+当前 checkpoint 使用 `ADAMW_TORCH_FUSED`，保存的 `exp_avg/exp_avg_sq` 为 bf16。
+如果直接恢复 optimizer/scheduler，会触发：
+
+```text
+params, grads, exp_avgs, and exp_avg_sqs must have same dtype, device, and layout
+```
+
+因此当前可行方式是：
+
+```text
+--resume_from_checkpoint <checkpoint>
+--resume_only_model true
+```
+
+它会恢复 LoRA adapter 权重，但跳过 optimizer/scheduler/RNG 状态。优点是稳定可用；代价是
+optimizer momentum、scheduler 和 RNG 会重置，不是 bit-exact resume。
+
+如果希望未来支持完整 optimizer 恢复，正式训练应从开始就使用非 fused AdamW：
+
+```text
+--optim adamw_torch
+```
+
+然后用新的 checkpoint 做一次“optimizer + scheduler + RNG”完整 resume 验证。
