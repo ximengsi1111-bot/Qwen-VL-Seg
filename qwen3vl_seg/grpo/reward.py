@@ -293,6 +293,8 @@ class SegIoUReward(ORM):
                 processor_kwargs={"images_kwargs": {"max_pixels": _MAX_PIXELS, "min_pixels": 56 * 56}},
             )
             enc = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in enc.items()}
+            if not bool(enc["mm_token_type_ids"].any().item()):
+                continue
             grid = enc["image_grid_thw"][0]
             grid_h, grid_w = int(grid[1]), int(grid[2])
             boxes = torch.tensor(
@@ -402,6 +404,10 @@ class SegIoUReward(ORM):
             out_dec = wrapper(batch)
 
         logits_all = out_dec["mask_logits"]
+        if logits_all.shape[0] != len(group):
+            raise RuntimeError(
+                f"batch decoder returned {logits_all.shape[0]} rows for {len(group)} samples"
+            )
         stride_h = int(group[0]["grid_h"]) * 2
         stride_w = int(group[0]["grid_w"]) * 2
         gt_masks = self._load_gt_masks(group[0]["gt"], stride_h, stride_w)
