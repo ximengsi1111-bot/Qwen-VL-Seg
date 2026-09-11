@@ -4,15 +4,15 @@
 #SBATCH --gres=gpu:6
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=192G
-#SBATCH --time=01:00:00
-#SBATCH --job-name=qvlseg-vllm-grpo-smoke
-#SBATCH --output=/mingli01/data/xyk/grpo/vllm_grpo_smoke_%j.out
-#SBATCH --error=/mingli01/data/xyk/grpo/vllm_grpo_smoke_%j.err
+#SBATCH --time=72:00:00
+#SBATCH --job-name=qvlseg-vllm-grpo70k-train
+#SBATCH --output=/mingli01/data/xyk/grpo/vllm_grpo_70k_train_%j.out
+#SBATCH --error=/mingli01/data/xyk/grpo/vllm_grpo_70k_train_%j.err
 set -e
 export PYTHONNOUSERSITE=1
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-export MASTER_PORT=${MASTER_PORT:-29601}
+export MASTER_PORT=${MASTER_PORT:-29606}
 export OPTIM=${OPTIM:-adamw_torch}
 export NPROC_PER_NODE=${NPROC_PER_NODE:-6}
 export PATH=/mingli01/data/xyk/conda/vllm-qwen3vl/bin:$PATH
@@ -34,8 +34,7 @@ DATASET=${DATASET:-/mingli01/data/xyk/grpo/rl_hard_70k.jsonl}
 NUM_GENERATIONS=${NUM_GENERATIONS:-4}
 GEN_BATCH=${GEN_BATCH:-96}
 PER_DEVICE_BATCH=${PER_DEVICE_BATCH:-16}
-MAX_STEPS=${MAX_STEPS:-10}
-OUT_DIR=${OUT_DIR:-/mingli01/data/xyk/grpo/train248k_vllm_70k_pd16_g6_cpu16_smoke}
+OUT_DIR=${OUT_DIR:-/mingli01/data/xyk/grpo/train248k_vllm_70k_g6_formal}
 SAVE_STEPS=${SAVE_STEPS:-200}
 SAVE_TOTAL_LIMIT=${SAVE_TOTAL_LIMIT:-5}
 RESUME_FROM_CHECKPOINT=${RESUME_FROM_CHECKPOINT:-}
@@ -59,7 +58,7 @@ python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" --master_port
   --optim "$OPTIM" \
   --per_device_train_batch_size "$PER_DEVICE_BATCH" \
   --num_ppo_epochs 1 \
-  --max_steps "$MAX_STEPS" \
+  --max_epochs 1 \
   --load_args "$LOAD_ARGS" \
   --resume_only_model "$RESUME_ONLY_MODEL" \
   --save_strategy steps \
