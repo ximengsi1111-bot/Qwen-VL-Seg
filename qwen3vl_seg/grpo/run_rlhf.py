@@ -4,9 +4,10 @@ Registers the custom reward into ``swift.rewards.orms`` at runtime so we do
 NOT modify the installed site-packages. CLI args are read from ``sys.argv``.
 """
 import sys
+from pathlib import Path
 
-# Ensure the project is importable.
-_PROJ = "/mingli01/project/xiyongkai/qwen3vl-seg"
+# Ensure this worktree's project is importable, not the main worktree.
+_PROJ = str(Path(__file__).resolve().parents[2])
 if _PROJ not in sys.path:
     sys.path.insert(0, _PROJ)
 
