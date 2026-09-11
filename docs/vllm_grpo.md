@@ -82,17 +82,18 @@ sbatch --parsable \
 
 对比非 vLLM 4 卡路径约 `9s/prompt`，当前 vLLM + 大批次约 `1.6x` 提升。
 
-## 已知问题
+## batch reward 修复结果
 
-vLLM colocate 下偶发：
+commit `7d61116` 已修复 vLLM 路径下的 batch mask reward 回退：
 
-```text
-[SegIoUReward] batch mask decode failed, falling back: index 1 is out of bounds for dimension 0 with size 1
-```
+- 没有图像 token 或没有有效 `image_grid_thw` 的样本直接跳过，mask reward = 0；
+- 单个样本 multimodal 编码失败只跳过该样本，不再拖垮整个 batch；
+- 不再出现 `batch mask decode failed` 警告。
 
-原因是同一 batch 中个别样本的图像 token 在输入中被截断，decoder 批量前向返回的行数少于 batch
-item 数。当前会自动回退到单样本 mask reward，数值正确，但 batch reward 的加速没有完全生效。
-后续可把这类样本单独分组处理。
+验证：job `101542`，`gen_batch=32`，10 步完成，保存 `checkpoint-10`，显存约
+`58.25 GiB/GPU`，稳定约 `21.6s/step`。修复前同样配置约 `21.6–21.9s/step`，
+说明 reward 回退不是当前 vLLM 路径的主要瓶颈；当前瓶颈更可能在 vLLM rollout、
+LoRA 权重同步和 colocate sleep/wake。
 
 ## 与 72h 一个 epoch 的关系
 
