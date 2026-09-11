@@ -28,19 +28,21 @@ mkdir -p "$HF_HOME" "$HF_DATASETS_CACHE" "$TRANSFORMERS_CACHE" "$TMPDIR" "$MODEL
 export GRPO_BASE=/mingli01/data/xyk/model/grpo-policy-248k
 export GRPO_STAGE2=/mingli01/data/xyk/checkpoints/small/stage2-248k
 export GRPO_MAX_PIXELS=589824
-GEN_BATCH=${GEN_BATCH:-8}
-PER_DEVICE_BATCH=${PER_DEVICE_BATCH:-2}
-MAX_STEPS=${MAX_STEPS:-5}
-OUT_DIR=${OUT_DIR:-/mingli01/data/xyk/grpo/train248k_vllm_smoke}
+DATASET=${DATASET:-/mingli01/data/xyk/grpo/rl_hard_70k.jsonl}
+NUM_GENERATIONS=${NUM_GENERATIONS:-4}
+GEN_BATCH=${GEN_BATCH:-64}
+PER_DEVICE_BATCH=${PER_DEVICE_BATCH:-8}
+MAX_STEPS=${MAX_STEPS:-10}
+OUT_DIR=${OUT_DIR:-/mingli01/data/xyk/grpo/train248k_vllm_70k_smoke}
 
 python -m torch.distributed.run --nproc_per_node=4 --master_port="$MASTER_PORT" qwen3vl_seg/grpo/run_rlhf.py \
   --model /mingli01/data/xyk/model/grpo-policy-248k \
   --model_type qwen3_vl \
-  --dataset /mingli01/data/xyk/grpo/rl_hard.jsonl \
+  --dataset "$DATASET" \
   --reward_funcs seg_iou \
   --rlhf_type grpo \
   --advantage_estimator grpo \
-  --num_generations 8 \
+  --num_generations "$NUM_GENERATIONS" \
   --generation_batch_size "$GEN_BATCH" \
   --learning_rate 2e-5 \
   --per_device_train_batch_size "$PER_DEVICE_BATCH" \
