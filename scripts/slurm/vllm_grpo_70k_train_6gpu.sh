@@ -79,6 +79,7 @@ python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" --master_port
   --vllm_enable_lora true \
   --lora_rank 8 \
   --vllm_gpu_memory_utilization 0.45 \
+  --vllm_mm_processor_cache_gb 0 \
   --vllm_enforce_eager true \
   --vllm_max_model_len 8192 \
   --sleep_level 1 \
