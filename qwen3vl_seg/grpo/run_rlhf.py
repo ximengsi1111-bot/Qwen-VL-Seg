@@ -3,6 +3,7 @@
 Registers the custom reward into ``swift.rewards.orms`` at runtime so we do
 NOT modify the installed site-packages. CLI args are read from ``sys.argv``.
 """
+import os
 import sys
 from pathlib import Path
 
@@ -25,7 +26,18 @@ def _register_seg_iou_reward() -> None:
         print(f"[warn] could not register seg_iou reward: {exc}")
 
 
+def _register_on_policy_trainer() -> None:
+    """Select the live-policy GRPO trainer when explicitly enabled."""
+    enabled = os.environ.get("GRPO_ON_POLICY_REWARD", "0").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return
+    from swift.trainers.trainer_factory import TrainerFactory
+    TrainerFactory.TRAINER_MAPPING["grpo"] = "qwen3vl_seg.grpo.trainer.OnPolicySegGRPOTrainer"
+    print("[run_rlhf] using OnPolicySegGRPOTrainer", flush=True)
+
+
 if __name__ == "__main__":
     _register_seg_iou_reward()
+    _register_on_policy_trainer()
     from swift.pipelines.train.rlhf import rlhf_main
     rlhf_main()
