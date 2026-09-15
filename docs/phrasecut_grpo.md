@@ -60,3 +60,15 @@ sbatch scripts/slurm/vllm_grpo_phrasecut_5k_200.sh
 - 6 卡，`NUM_GENERATIONS=4`，`GEN_BATCH=96`，`PER_DEVICE_BATCH=16`。
 - Pilot 训练 `200` 步，结果写入 `runs/phrasecut_5k_200`。
 - 正式 70k 只有在本 pilot 的 reward、显存、吞吐和日志均正常后启动。
+
+## 当前执行状态（2026-09-15）
+
+- PhraseCut 14.2 GiB 数据包已完整下载并通过 `gzip -t`。
+- 解压数据：15 GiB，71,743 张训练图可用。
+- 5k pilot：5,000 条、5,000 张不同图像、6,286 个实例 mask。
+- relation 表达 734 条，attribute 表达 2,937 条。
+- 格式校验：图片、mask、bbox、JSON 全部通过，无错误。
+- 训练作业：`107225`，6 卡，200 步，状态 `RUNNING`。
+- 首个完整步：`reward=0.654699`、`box=0.697723`、`mask=0.636261`，`missing_mask=0`、`decode_fail=0`。
+- 第 5 步：`reward=0.3857`、`reward_std=0.1084`、显存约 `69.9 GiB/GPU`。
+- 自动评测作业：`107230`，依赖 `afterok:107225`。
