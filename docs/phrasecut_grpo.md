@@ -68,7 +68,47 @@ sbatch scripts/slurm/vllm_grpo_phrasecut_5k_200.sh
 - 5k pilot：5,000 条、5,000 张不同图像、6,286 个实例 mask。
 - relation 表达 734 条，attribute 表达 2,937 条。
 - 格式校验：图片、mask、bbox、JSON 全部通过，无错误。
-- 训练作业：`107225`，6 卡，200 步，状态 `RUNNING`。
+- 训练作业：`107225`，6 卡，200 步，状态（当时）`RUNNING`，后续已完成。
 - 首个完整步：`reward=0.654699`、`box=0.697723`、`mask=0.636261`，`missing_mask=0`、`decode_fail=0`。
 - 第 5 步：`reward=0.3857`、`reward_std=0.1084`、显存约 `69.9 GiB/GPU`。
 - 自动评测作业：`107230`，依赖 `afterok:107225`。
+
+
+## 正式 50k 数据集（2026-09-16）
+
+- JSONL：`/mingli01/data/xyk/grpo/newdata/phrasecut/processed/phrasecut_50k_formal.jsonl`
+- Stats：`/mingli01/data/xyk/grpo/newdata/phrasecut/processed/phrasecut_50k_formal_stats.json`
+- Masks：`/mingli01/data/xyk/grpo/newdata/phrasecut/processed/masks_50k_formal`
+- 样本：`50,000`
+- 唯一图像：`50,000`
+- Mask 文件：`61,948`
+- JSONL 大小：`69 MB`
+- Mask 大小：`247 MB`
+- 选择规则：每张图最多一个 phrase，随机均匀采样，不做难度筛选，不额外增强
+- 校验：JSON、图片、bbox、mask 全部通过，`errors={}`
+
+## 5k pilot 训练与评测状态（2026-09-15）
+
+- 训练作业 `107225`：`COMPLETED`，ExitCode `0:0`，200 步，耗时 `00:57:07`。
+- 评测作业 `107230`：`COMPLETED`，ExitCode `0:0`，耗时 `00:32:05`。
+- 训练关键指标：`missing_mask=0`、`mismatch=0`、`parse_fail=0`、`decode_fail=0`。
+- 新 PhraseCut 5k checkpoint-200 同口径评测：
+  - mIoU：`0.716184`
+  - cIoU：`0.707994`
+  - P@0.5：`0.858333`
+- 旧 on-policy 200 步：
+  - mIoU：`0.714266`
+  - cIoU：`0.704611`
+  - P@0.5：`0.855000`
+- SFT 248k 基线：
+  - mIoU：`0.714655`
+  - cIoU：`0.707001`
+  - P@0.5：`0.855833`
+
+## 下一步方案状态
+
+- 已确定不再采用 decoder frozen + detached reward 作为唯一方案。
+- 目标方向：Qwen3-VL 与 mask decoder 组成统一策略，decoder 不冻结，共同进入 GRPO。
+- mask 随机性来自 decoder logits 后的最终 mask 采样。
+- mask IoU 在 decoder 输出分辨率上计算，GT mask 使用与 SFT 一致的 bilinear resize + `>127.5` 二值化。
+- ms-swift 侧需要注册统一模型与自定义 GRPO trainer；vLLM 仅在需要执行 decoder 时注册 custom model。
