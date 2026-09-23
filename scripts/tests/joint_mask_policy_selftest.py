@@ -206,7 +206,36 @@ def _run_end_to_end(tmpdir: str) -> None:
         f"grad_decoder={decoder_grad:.3f} grad_hidden={hidden_grad:.3f} grad_visual={visual_grad:.3f}"
     )
 
-    # ---- 3. degenerate cases are skipped, not crashed ---------------------
+    # ---- 3. frozen decoder keeps a gradient path to Qwen features --------
+    for parameter in decoder.parameters():
+        parameter.grad = None
+    decoder.requires_grad_(False)
+    decoder.eval()
+    frozen_hooks = _hooks(requires_grad=True)
+    frozen_loss, frozen_metrics = joint_mask_policy_loss(
+        decoder=decoder,
+        hooks=frozen_hooks,
+        model_inputs=model_inputs,
+        records=records,
+        device=torch.device("cpu"),
+        logprob_reduction="mean",
+        clip_epsilon=0.2,
+    )
+    assert frozen_loss is not None and torch.isfinite(frozen_loss), frozen_loss
+    assert frozen_metrics["joint_masks/grad_to_llm"] == 1.0
+    frozen_loss.backward()
+    assert all(parameter.grad is None for parameter in decoder.parameters())
+    frozen_hidden_grad = float(frozen_hooks.text_last_hidden.grad.abs().sum())
+    frozen_visual_grad = sum(float(scale.grad.abs().sum()) for scale in frozen_hooks.visual_deepstack)
+    assert frozen_hidden_grad > 0, frozen_hidden_grad
+    assert frozen_visual_grad > 0, frozen_visual_grad
+    print(
+        f"[ok] frozen decoder: loss={frozen_loss.item():.6f} "
+        f"grad_decoder=0 grad_hidden={frozen_hidden_grad:.3f} "
+        f"grad_visual={frozen_visual_grad:.3f}"
+    )
+
+    # ---- 4. degenerate cases are skipped, not crashed ---------------------
     empty = MaskActionRecord(row=0, image_index=0, failure="parse_fail")
     skipped, _ = joint_mask_policy_loss(
         decoder=decoder,

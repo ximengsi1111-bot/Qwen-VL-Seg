@@ -71,6 +71,7 @@ class OnPolicySegGRPOTrainer(GRPOTrainer):
         self._on_policy_capture_active = False
 
         self._joint_enabled = _env_flag("GRPO_JOINT_MASK_POLICY", False)
+        self._joint_freeze_decoder = _env_flag("GRPO_MASK_POLICY_FREEZE", False)
         self._joint_beta = _env_float("GRPO_MASK_POLICY_BETA", 0.01)
         self._joint_lr = _env_float("GRPO_MASK_POLICY_LR", 1e-5)
         self._joint_clip = _env_float("GRPO_MASK_POLICY_CLIP", 0.2)
@@ -81,6 +82,7 @@ class OnPolicySegGRPOTrainer(GRPOTrainer):
         self._joint_pending: list[tuple[int, dict[str, Any], list[MaskActionRecord]]] = []
         self._joint_batches: dict[int, list[MaskActionRecord]] = {}
         self._joint_optimizer_attached = False
+        self._joint_freeze_logged = False
         self._joint_warned_no_grad = False
 
         if self._joint_enabled and not self._on_policy_enabled:
@@ -114,7 +116,7 @@ class OnPolicySegGRPOTrainer(GRPOTrainer):
                 "[OnPolicySegGRPOTrainer] enabled "
                 f"mode={self._on_policy_mode} box_weight={self._on_policy_box_weight} "
                 f"mask_weight={self._on_policy_mask_weight} joint_mask_policy={self._joint_enabled} "
-                f"beta={self._joint_beta} mask_lr={self._joint_lr} "
+                f"freeze_decoder={self._joint_freeze_decoder} beta={self._joint_beta} mask_lr={self._joint_lr} "
                 f"mask_dtype={self._joint_dtype} sample_masks={self._joint_sample_masks} "
                 f"logprob_reduction={self._joint_logprob} reward={self._joint_reward_mode}",
                 flush=True,
@@ -132,7 +134,7 @@ class OnPolicySegGRPOTrainer(GRPOTrainer):
                     checkpoint,
                     device=self.accelerator.device,
                     dtype=self._joint_dtype,
-                    trainable=True,
+                    trainable=not self._joint_freeze_decoder,
                     init_state=init_state,
                 )
             else:
@@ -440,6 +442,14 @@ class OnPolicySegGRPOTrainer(GRPOTrainer):
         """Add the (already instantiated) mask decoder to the actor optimizer."""
         if not self._joint_enabled:
             return
+        if self._joint_freeze_decoder:
+            if not self._joint_freeze_logged and self.accelerator.is_main_process:
+                print(
+                    "[joint-mask] mask decoder is frozen; decoder optimizer group disabled",
+                    flush=True,
+                )
+                self._joint_freeze_logged = True
+            return
         if optimizer is None:
             optimizer = getattr(self, "optimizer", None)
         if optimizer is None:
@@ -479,6 +489,9 @@ class OnPolicySegGRPOTrainer(GRPOTrainer):
         decoder = self._on_policy_decoder
         if decoder is None:
             return
+        if self._joint_freeze_decoder:
+            self._metrics["train"].setdefault("joint_masks/decoder_frozen", []).append(1.0)
+            return
         parameters = [param for param in decoder.parameters() if param.requires_grad]
         if not parameters:
             return
@@ -506,7 +519,7 @@ class OnPolicySegGRPOTrainer(GRPOTrainer):
     # ---------------------------------------------------------------- checkpoint
     def _save_checkpoint(self, model, trial, metrics=None):
         output = super()._save_checkpoint(model, trial)
-        if self._joint_enabled and self.accelerator.is_main_process:
+        if self._joint_enabled and not self._joint_freeze_decoder and self.accelerator.is_main_process:
             self._save_joint_decoder_snapshot()
         return output
 

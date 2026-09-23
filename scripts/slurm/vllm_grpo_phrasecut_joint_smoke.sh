@@ -17,9 +17,9 @@
 #   * token action y : vLLM rollout of boxes + <mask_token>          (L_token)
 #   * mask action  m : Bernoulli sample of the decoder mask logits   (beta * L_mask)
 #
-# The mask decoder is trainable, its parameters live in a separate optimizer
-# group (GRPO_MASK_POLICY_LR), and its gradients are all-reduced manually because
-# the decoder sits outside the DDP-wrapped actor.
+# The mask decoder is frozen by default. Its outputs remain differentiable with
+# respect to the Qwen hidden states, so beta * L_mask can update the LoRA policy
+# while all decoder parameters stay fixed.
 set -e
 export PYTHONNOUSERSITE=1
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
@@ -48,9 +48,11 @@ export GRPO_ON_POLICY_MODE=reuse
 export GRPO_ON_POLICY_DEBUG=1
 export GRPO_ON_POLICY_BOX_WEIGHT=0.3
 export GRPO_ON_POLICY_MASK_WEIGHT=0.7
-# ---- joint mask policy (trainable decoder, mask action in the GRPO objective) ----
+# ---- joint mask policy (decoder frozen by default, mask action in the GRPO objective) ----
 export GRPO_JOINT_MASK_POLICY=${GRPO_JOINT_MASK_POLICY:-1}
+export GRPO_MASK_POLICY_FREEZE=${GRPO_MASK_POLICY_FREEZE:-1}
 export GRPO_MASK_POLICY_BETA=${GRPO_MASK_POLICY_BETA:-0.01}
+# decoder LR is only used when GRPO_MASK_POLICY_FREEZE=0
 export GRPO_MASK_POLICY_LR=${GRPO_MASK_POLICY_LR:-1e-5}
 export GRPO_MASK_POLICY_CLIP=${GRPO_MASK_POLICY_CLIP:-0.2}
 export GRPO_MASK_POLICY_DTYPE=${GRPO_MASK_POLICY_DTYPE:-float32}
@@ -64,6 +66,7 @@ DATASET=${DATASET:-/mingli01/data/xyk/grpo/newdata/phrasecut/processed/phrasecut
 NUM_GENERATIONS=${NUM_GENERATIONS:-4}
 GEN_BATCH=${GEN_BATCH:-96}
 PER_DEVICE_BATCH=${PER_DEVICE_BATCH:-16}
+TOKEN_LR=${TOKEN_LR:-1e-4}
 OUT_DIR=${OUT_DIR:-/mingli01/data/xyk/grpo/newdata/phrasecut/runs/phrasecut_5k_joint_smoke}
 SAVE_STEPS=${SAVE_STEPS:-10}
 SAVE_TOTAL_LIMIT=${SAVE_TOTAL_LIMIT:-1}
@@ -97,7 +100,7 @@ python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" --master_port
   --advantage_estimator grpo \
   --num_generations "$NUM_GENERATIONS" \
   --generation_batch_size "$GEN_BATCH" \
-  --learning_rate 2e-5 \
+  --learning_rate "$TOKEN_LR" \
   --optim "$OPTIM" \
   --per_device_train_batch_size "$PER_DEVICE_BATCH" \
   --num_ppo_epochs 1 \
