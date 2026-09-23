@@ -505,7 +505,7 @@ class OnPolicySegGRPOTrainer(GRPOTrainer):
 
     # ---------------------------------------------------------------- checkpoint
     def _save_checkpoint(self, model, trial, metrics=None):
-        output = super()._save_checkpoint(model, trial, metrics)
+        output = super()._save_checkpoint(model, trial)
         if self._joint_enabled and self.accelerator.is_main_process:
             self._save_joint_decoder_snapshot()
         return output
