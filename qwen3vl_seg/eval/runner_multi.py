@@ -137,25 +137,30 @@ def _panel(
 
 def _save_mask_viz(
     image: Image.Image,
-    pred_mask: np.ndarray,
-    pred_bbox_1000: list[float],
+    pred_masks: np.ndarray,
+    pred_boxes_1000: list[list[float]],
     gt_masks: np.ndarray,
     gt_boxes_norm: np.ndarray,
     path: Path,
 ) -> None:
     width, height = image.size
-    pred_boxes = [
-        (
-            float(pred_bbox_1000[0]) / 1000.0 * width,
-            float(pred_bbox_1000[1]) / 1000.0 * height,
-            float(pred_bbox_1000[2]) / 1000.0 * width,
-            float(pred_bbox_1000[3]) / 1000.0 * height,
+    pred_boxes = []
+    for pred_bbox_1000 in pred_boxes_1000:
+        pred_boxes.append(
+            (
+                float(pred_bbox_1000[0]) / 1000.0 * width,
+                float(pred_bbox_1000[1]) / 1000.0 * height,
+                float(pred_bbox_1000[2]) / 1000.0 * width,
+                float(pred_bbox_1000[3]) / 1000.0 * height,
+            )
         )
-    ]
     gt_boxes = []
     if gt_boxes_norm is not None and gt_boxes_norm.ndim == 2:
         for box in gt_boxes_norm:
             gt_boxes.append((box[0] * width, box[1] * height, box[2] * width, box[3] * height))
+    pred_mask = np.asarray(pred_masks)
+    if pred_mask.ndim == 3:
+        pred_mask = (pred_mask > 0).any(axis=0)
     gt_mask = np.asarray(gt_masks)
     if gt_mask.ndim == 3:
         gt_mask = gt_mask.max(axis=0)
@@ -386,7 +391,7 @@ def main() -> int:
                     row["miou"] = strict
                     strict_values.append(strict)
                     if save_viz:
-                        _save_mask_viz(image, preds[0], records[0]["bbox_2d"], gt,
+                        _save_mask_viz(image, preds, [r["bbox_2d"] for r in records], gt,
                                        item["boxes"].detach().cpu().numpy(),
                                        output_dir / "viz" / f"{sample.sample_id}_cmp.png")
             elif valid:
@@ -439,7 +444,7 @@ def main() -> int:
                     row["miou"] = strict
                     strict_values.append(strict)
                     if save_viz:
-                        _save_mask_viz(image, preds[0], records[0]["bbox_2d"], gt,
+                        _save_mask_viz(image, preds, [r["bbox_2d"] for r in records], gt,
                                        item["boxes"].detach().cpu().numpy(),
                                        output_dir / "viz" / f"{sample.sample_id}_cmp.png")
 
