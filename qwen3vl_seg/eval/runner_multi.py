@@ -44,6 +44,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--use-bucket", action="store_true")
     parser.add_argument("--resume-done", default="")
+    parser.add_argument("--max-new-tokens", type=int, default=256)
     parser.add_argument("--bucket-sizes", default="256,384,512,640,768")
 
     return parser.parse_args()
@@ -283,7 +284,7 @@ def main() -> int:
                 input_ids=enc["input_ids"], attention_mask=enc["attention_mask"],
                 pixel_values=enc["pixel_values"], image_grid_thw=enc["image_grid_thw"],
                 mm_token_type_ids=enc["mm_token_type_ids"],
-                max_new_tokens=256, do_sample=False, use_cache=True,
+                max_new_tokens=args.max_new_tokens, do_sample=False, use_cache=True,
             )
             # per-sample decode + parse
             rows = []
