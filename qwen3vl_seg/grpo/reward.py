@@ -5,10 +5,10 @@ item's gold response (JSON) carrying GT.  Custom dataset columns
 (``image_path``/``mask_paths``/``bboxes``/``image_size``) and ``messages``
 flow into ``**kwargs`` via ``to_reward_row``.
 
-Mask term is aligned to the formal eval (runner_multi.py) semantics:
-  - Hungarian optimal instance matching (NOT index pairing)
-  - per-GT-instance recall aggregation (sum of matched IoU / n_gt), so missing
-    GT instances are penalised
+Reward semantics:
+  - box and mask rewards both use Hungarian one-to-one matching
+  - both use continuous set-F1: 2 * sum(matched IoU) / (n_pred + n_gt)
+  - extra predictions and missed GT instances are both penalised
   - identical image/mask resolution as the eval (``GRPO_MAX_PIXELS``, default 262144)
   - base model = GRPO policy base, and an optional saved adapter (``GRPO_ADAPTER``)
     can be merged for OFFLINE reward evaluation on a checkpoint.
@@ -27,6 +27,8 @@ import torch
 import torch.nn.functional as F
 
 from swift.rewards.orm import ORM
+
+from qwen3vl_seg.eval.metrics import hungarian_box_f1, hungarian_mask_f1
 
 
 def _box_iou(a, b):
@@ -113,11 +115,11 @@ class SegIoUReward(ORM):
         n = len(completions)
         gts = [self._parse_solution(sol) for sol in solution]
         pred_boxes = [self._parse_completion(comp) for comp in completions]
-        box_ious = []
+        box_f1 = []
         for i in range(n):
             gt_boxes = gts[i].get("bbox_1000", [])
             preds = pred_boxes[i]
-            box_ious.append(max(_box_iou(p, g) for p in preds for g in gt_boxes) if gt_boxes and preds else 0.0)
+            box_f1.append(hungarian_box_f1(preds, gt_boxes))
 
         mask_ious = [0.0] * n
         if self.mask_weight > 0.0:
@@ -147,7 +149,7 @@ class SegIoUReward(ORM):
                     except Exception:
                         mask_ious[i] = 0.0
 
-        return [self.box_weight * box_ious[i] + self.mask_weight * mask_ious[i] for i in range(n)]
+        return [self.box_weight * box_f1[i] + self.mask_weight * mask_ious[i] for i in range(n)]
 
     def _messages_at(self, messages, i):
         if messages is None:
@@ -160,15 +162,14 @@ class SegIoUReward(ORM):
     def _mask_iou(self, comp, gt, sample_messages):
         """Run the frozen decoder to get a predicted mask, scored like the formal eval.
 
-        Uses Hungarian instance matching and per-GT recall aggregation, matching
-        the per-sample miou definition in ``runner_multi.py`` / ``metrics.py``.
+        Uses Hungarian instance matching and continuous set-F1 over
+        ``n_pred`` and ``n_gt``, so extra predictions are penalised.
         """
         from qwen3vl_seg.model.prompt_format import (
             MASK_START, MASK_TOKEN, MASK_END,
         )
         from qwen3vl_seg.eval.runner import _inject_mask_placeholders, parse_generated_boxes_and_masks
         from qwen3vl_seg.data.dataset import normalize_decoder_image
-        from qwen3vl_seg.eval.metrics import match_masks
 
         records = parse_generated_boxes_and_masks(comp)
         if not records:
@@ -247,8 +248,7 @@ class SegIoUReward(ORM):
         # Hungarian optimal assignment + per-GT-recall aggregation (same as eval).
         pred_list = [preds[i] for i in range(len(preds))]
         gt_list = [np.asarray(g, dtype=np.uint8) for g in gt_masks]
-        pred_idx, gt_idx, total = match_masks(pred_list, gt_list)
-        return float(total / max(len(gt_list), 1))
+        return hungarian_mask_f1(pred_list, gt_list)
 
     def _mask_iou_batch(self, comps, gts, msgs_list):
         """Batch the frozen decoder forward for completions sharing image/GT."""
@@ -362,7 +362,6 @@ class SegIoUReward(ORM):
         return gt_masks
 
     def _score_mask_group(self, group):
-        from qwen3vl_seg.eval.metrics import match_masks
 
         wrapper = self._get_wrapper()
         device = wrapper.base.device
@@ -434,6 +433,5 @@ class SegIoUReward(ORM):
             num = item["boxes"].shape[0]
             preds = (torch.sigmoid(logits_all[j][:num]) > 0.5).float().cpu().numpy()
             pred_list = [preds[k] for k in range(num)]
-            _, _, total = match_masks(pred_list, gt_list)
-            scores[item["idx"]] = float(total / max(len(gt_list), 1))
+            scores[item["idx"]] = hungarian_mask_f1(pred_list, gt_list)
         return scores

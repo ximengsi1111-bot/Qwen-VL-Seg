@@ -70,6 +70,7 @@ TOKEN_LR=${TOKEN_LR:-1e-4}
 OUT_DIR=${OUT_DIR:-/mingli01/data/xyk/grpo/newdata/phrasecut/runs/phrasecut_50k_joint_formal}
 SAVE_STEPS=${SAVE_STEPS:-200}
 SAVE_TOTAL_LIMIT=${SAVE_TOTAL_LIMIT:-5}
+MAX_STEPS=${MAX_STEPS:-0}
 RESUME_FROM_CHECKPOINT=${RESUME_FROM_CHECKPOINT:-}
 LOAD_ARGS=${LOAD_ARGS:-true}
 RESUME_ONLY_MODEL=${RESUME_ONLY_MODEL:-}
@@ -83,6 +84,10 @@ fi
 RESUME_ARGS=()
 if [ -n "$RESUME_FROM_CHECKPOINT" ]; then
   RESUME_ARGS+=(--resume_from_checkpoint "$RESUME_FROM_CHECKPOINT")
+fi
+MAX_STEPS_ARGS=()
+if [ "$MAX_STEPS" -gt 0 ]; then
+  MAX_STEPS_ARGS+=(--max_steps "$MAX_STEPS")
 fi
 
 echo "=== nvidia-smi: compute apps at job start ==="
@@ -105,6 +110,7 @@ python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" --master_port
   --num_ppo_epochs 1 \
   --max_epochs 1 \
   --num_train_epochs 1 \
+  "${MAX_STEPS_ARGS[@]}" \
   --load_args "$LOAD_ARGS" \
   --resume_only_model "$RESUME_ONLY_MODEL" \
   --save_strategy steps \

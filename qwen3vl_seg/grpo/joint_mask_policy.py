@@ -13,7 +13,7 @@ Factorised joint policy::
 ``log pi_phi(m | x, y)`` is differentiable w.r.t. both the decoder parameters and
 the Qwen3-VL hidden states that feed it, so a single GRPO objective updates the
 whole joint policy instead of only the language branch.  The reward itself
-(box IoU / mask IoU) stays non-differentiable and is always detached.
+(box F1 / mask F1) stays non-differentiable and is always detached.
 
 Mask resolution follows SFT exactly: the GT mask is bilinearly resized to the
 decoder output resolution and binarised with ``> 127.5``.
@@ -31,7 +31,7 @@ import torch.nn.functional as F
 from PIL import Image
 
 from qwen3vl_seg.data.dataset import normalize_decoder_image
-from qwen3vl_seg.eval.metrics import match_masks
+from qwen3vl_seg.eval.metrics import hungarian_mask_f1
 from qwen3vl_seg.grpo.on_policy_reward import (
     _box_reward,
     _completion_text,
@@ -151,6 +151,7 @@ class MaskActionRecord:
     sampled_mask: torch.Tensor | None = None
     gt_masks: list[np.ndarray] = field(default_factory=list)
     old_mask_logp: float = 0.0
+    # Historical field names: these now store Hungarian continuous F1.
     mask_iou: float = 0.0
     deterministic_mask_iou: float = 0.0
     box_iou: float = 0.0
@@ -311,13 +312,11 @@ def capture_mask_actions_from_policy_forward(
 
                 sampled_np = record.sampled_mask.numpy() > 0.5
                 pred_list = [sampled_np[index] for index in range(sampled_np.shape[0])]
-                _, _, total = match_masks(pred_list, gt_masks)
-                record.mask_iou = float(total / max(len(gt_masks), 1))
+                record.mask_iou = hungarian_mask_f1(pred_list, gt_masks)
 
                 det_np = (probabilities > 0.5).detach().to("cpu").numpy()
                 det_list = [det_np[index] for index in range(det_np.shape[0])]
-                _, _, det_total = match_masks(det_list, gt_masks)
-                record.deterministic_mask_iou = float(det_total / max(len(gt_masks), 1))
+                record.deterministic_mask_iou = hungarian_mask_f1(det_list, gt_masks)
             except Exception as exc:  # noqa: BLE001
                 record.failure = "decode_fail"
                 record.error = str(exc)
@@ -351,15 +350,15 @@ def joint_mask_policy_loss(
 
     ``L_mask = -E[ min(r * A, clip(r, 1-e, 1+e) * A) ]`` with
     ``r = exp(log pi_phi(m|.) - log mu(m|.))`` and ``A`` the group-normalised mask
-    IoU advantage of the sampled mask.
+    F1 advantage of the sampled mask.
     """
     usable = [record for record in records if record.valid]
     metrics: dict[str, float] = {
         "joint_masks/valid_ratio": (len(usable) / len(records)) if records else 0.0,
-        "joint_masks/sampled_iou": (
+        "joint_masks/sampled_f1": (
             sum(record.mask_iou for record in usable) / len(usable) if usable else 0.0
         ),
-        "joint_masks/deterministic_iou": (
+        "joint_masks/deterministic_f1": (
             sum(record.deterministic_mask_iou for record in usable) / len(usable) if usable else 0.0
         ),
         "joint_masks/instances": (

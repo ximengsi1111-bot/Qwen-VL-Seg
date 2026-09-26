@@ -15,7 +15,7 @@ import torch
 from PIL import Image
 
 from qwen3vl_seg.data.dataset import normalize_decoder_image
-from qwen3vl_seg.eval.metrics import match_masks
+from qwen3vl_seg.eval.metrics import hungarian_box_f1, hungarian_mask_f1
 from qwen3vl_seg.model.mask_decoder import BoxGuidedMaskDecoder, MaskDecoderConfig
 from qwen3vl_seg.model.prompt_format import MASK_TOKEN
 from qwen3vl_seg.model.prompt_parser import parse_generated_boxes_and_masks
@@ -55,12 +55,11 @@ def _completion_text(sample: Any) -> str:
 
 
 def _box_reward(records: list[dict[str, Any]], gt: dict[str, Any]) -> float:
+    """Continuous Hungarian-F1 over predicted and GT boxes."""
     gt_boxes = gt.get("bbox_1000", [])
     pred_boxes = [r.get("bbox_2d") for r in records]
     pred_boxes = [b for b in pred_boxes if isinstance(b, (list, tuple)) and len(b) == 4]
-    if not gt_boxes or not pred_boxes:
-        return 0.0
-    return max(_box_iou(pred, gt_box) for pred in pred_boxes for gt_box in gt_boxes)
+    return hungarian_box_f1(pred_boxes, gt_boxes)
 
 
 def _load_gt_masks(gt: dict[str, Any], stride_h: int, stride_w: int) -> list[np.ndarray]:
@@ -259,8 +258,7 @@ def score_masks_from_policy_forward(
             logits = decoded["mask_logits"][0]
             preds = (torch.sigmoid(logits[: len(records)]) > 0.5).float().cpu().numpy()
             pred_list = [preds[index] for index in range(len(preds))]
-            _, _, total = match_masks(pred_list, gt_masks)
-            stat["mask_iou"] = float(total / max(len(gt_masks), 1))
+            stat["mask_iou"] = hungarian_mask_f1(pred_list, gt_masks)
         except Exception:
             stat["decode_fail"] = 1.0
         results.append(stat)

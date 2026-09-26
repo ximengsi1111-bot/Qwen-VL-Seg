@@ -190,10 +190,10 @@ class OnPolicySegGRPOTrainer(GRPOTrainer):
 
         mode = "train" if self.model.training else "eval"
         stats = list(self._on_policy_stats.values())
-        self._metrics[mode]["onpolicy/box_iou"].append(
+        self._metrics[mode]["onpolicy/box_f1"].append(
             sum(item["box_iou"] for item in stats) / len(stats)
         )
-        self._metrics[mode]["onpolicy/mask_iou"].append(
+        self._metrics[mode]["onpolicy/mask_f1"].append(
             sum(item["mask_iou"] for item in stats) / len(stats)
         )
         self._metrics[mode]["onpolicy/reward"].append(float(rewards.mean().item()))
@@ -210,10 +210,10 @@ class OnPolicySegGRPOTrainer(GRPOTrainer):
             sum(item["decode_fail"] for item in stats) / len(stats)
         )
         if self._joint_enabled:
-            self._metrics[mode]["onpolicy/sampled_mask_iou"].append(
+            self._metrics[mode]["onpolicy/sampled_mask_f1"].append(
                 sum(item.get("sampled_mask_iou", 0.0) for item in stats) / len(stats)
             )
-            self._metrics[mode]["onpolicy/deterministic_mask_iou"].append(
+            self._metrics[mode]["onpolicy/deterministic_mask_f1"].append(
                 sum(item.get("deterministic_mask_iou", 0.0) for item in stats) / len(stats)
             )
 
@@ -222,8 +222,8 @@ class OnPolicySegGRPOTrainer(GRPOTrainer):
                 "[OnPolicySegGRPOTrainer] "
                 f"step={self.state.global_step} "
                 f"reward={rewards.mean().item():.6f} "
-                f"box={sum(item['box_iou'] for item in stats) / len(stats):.6f} "
-                f"mask={sum(item['mask_iou'] for item in stats) / len(stats):.6f} "
+                f"box_f1={sum(item['box_iou'] for item in stats) / len(stats):.6f} "
+                f"mask_f1={sum(item['mask_iou'] for item in stats) / len(stats):.6f} "
                 f"missing_mask={sum(item['missing_mask_token'] for item in stats):.0f} "
                 f"mismatch={sum(item['mask_count_mismatch'] for item in stats):.0f} "
                 f"decode_fail={sum(item['decode_fail'] for item in stats):.0f}",
@@ -276,7 +276,7 @@ class OnPolicySegGRPOTrainer(GRPOTrainer):
             )
 
     def _mask_group_advantage(self, values: torch.Tensor) -> torch.Tensor:
-        """Group-normalised mask IoU advantage, matching ms-swift's group scaling."""
+        """Group-normalised mask F1 advantage, matching ms-swift's group scaling."""
         num_generations = int(self.num_generations if self.model.training else self.num_generations_eval)
         local_count = int(values.shape[0])
         gathered = self.accelerator.gather(values)

@@ -63,6 +63,60 @@ def match_masks(
     return pred_idx, gt_idx, float(ious.sum()) if ious.size else 0.0
 
 
+def matched_iou_f1(total_iou: float, n_pred: int, n_gt: int) -> float:
+    """Continuous set-F1 from matched IoU.
+
+    With ``T = sum(matched_iou)`` this is equivalent to
+    ``2 * (T / n_pred) * (T / n_gt) / ((T / n_pred) + (T / n_gt))``
+    and reduces to ``2 * T / (n_pred + n_gt)``.
+    """
+    denom = int(n_pred) + int(n_gt)
+    return float(2.0 * float(total_iou) / denom) if denom else 0.0
+
+
+def hungarian_mask_f1(
+    pred_masks: list[np.ndarray], gt_masks: list[np.ndarray]
+) -> float:
+    """Hungarian-matched continuous F1 over mask instances."""
+    _, _, ious = match_mask_ious(pred_masks, gt_masks)
+    total = float(ious.sum()) if ious.size else 0.0
+    return matched_iou_f1(total, len(pred_masks), len(gt_masks))
+
+
+def _box_iou_matrix(
+    pred_boxes: list[Iterable[float]], gt_boxes: list[Iterable[float]]
+) -> np.ndarray:
+    iou_matrix = np.zeros((len(pred_boxes), len(gt_boxes)), dtype=float)
+    for i, pred in enumerate(pred_boxes):
+        for j, gt in enumerate(gt_boxes):
+            iou_matrix[i, j] = bbox_iou(pred, gt)
+    return iou_matrix
+
+
+def match_box_ious(
+    pred_boxes: list[Iterable[float]], gt_boxes: list[Iterable[float]]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return one-to-one assignment indices and IoU for each matched box pair."""
+    if not pred_boxes or not gt_boxes:
+        return (
+            np.array([], dtype=int),
+            np.array([], dtype=int),
+            np.array([], dtype=float),
+        )
+    iou_matrix = _box_iou_matrix(pred_boxes, gt_boxes)
+    pred_idx, gt_idx = linear_sum_assignment(-iou_matrix)
+    return pred_idx, gt_idx, iou_matrix[pred_idx, gt_idx]
+
+
+def hungarian_box_f1(
+    pred_boxes: list[Iterable[float]], gt_boxes: list[Iterable[float]]
+) -> float:
+    """Hungarian-matched continuous F1 over bounding boxes."""
+    _, _, ious = match_box_ious(pred_boxes, gt_boxes)
+    total = float(ious.sum()) if ious.size else 0.0
+    return matched_iou_f1(total, len(pred_boxes), len(gt_boxes))
+
+
 def instance_metrics(
     pred_masks: list[np.ndarray],
     gt_masks: list[np.ndarray],
