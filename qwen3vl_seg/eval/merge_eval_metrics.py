@@ -1,7 +1,14 @@
 """Merge per-rank partial eval metrics into a single metrics.json."""
 from __future__ import annotations
-import json, sys
+
+import json
+import sys
 from pathlib import Path
+
+
+def _ratio(num: float, den: float) -> float:
+    return float(num / den) if den else 0.0
+
 
 def main() -> int:
     output_dir = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
@@ -9,32 +16,48 @@ def main() -> int:
     if not parts:
         print("no partial metrics found", file=sys.stderr)
         return 1
-    tot = {
+
+    totals = {
         "n_samples": 0,
-        "sum_strict": 0.0,
-        "sum_inter": 0.0,
-        "sum_union": 0.0,
-        "matched_correct": 0,
-        "matched_total": 0,
-        "strict_correct": 0,
-        "strict_total": 0,
+        "sum_miou": 0.0,
+        "sum_ciou": 0.0,
+        "tp@0.5": 0,
+        "fp@0.5": 0,
+        "fn@0.5": 0,
+        "diagnostic_matched_correct": 0,
+        "diagnostic_matched_total": 0,
     }
-    for p in parts:
-        d = json.loads(p.read_text(encoding="utf-8"))
-        for k in tot:
-            tot[k] += d.get(k, 0)
-    n = tot["n_samples"]
+    for path in parts:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for key in totals:
+            totals[key] += data.get(key, 0)
+
+    n = int(totals["n_samples"])
+    tp = int(totals["tp@0.5"])
+    fp = int(totals["fp@0.5"])
+    fn = int(totals["fn@0.5"])
+    precision = _ratio(tp, tp + fp)
+    recall = _ratio(tp, tp + fn)
+    f1 = _ratio(2 * tp, 2 * tp + fp + fn)
+    matched_total = int(totals["diagnostic_matched_total"])
     metrics = {
         "n_samples": n,
-        "miou": float(tot["sum_strict"] / n) if n else 0.0,
-        "ciou": float(tot["sum_inter"] / tot["sum_union"]) if tot["sum_union"] > 0 else 0.0,
-        "matched_p@0.5": float(tot["matched_correct"] / tot["matched_total"]) if tot["matched_total"] > 0 else 0.0,
-        "strict_p@0.5": float(tot["strict_correct"] / tot["strict_total"]) if tot["strict_total"] > 0 else 0.0,
+        "miou": _ratio(float(totals["sum_miou"]), n),
+        "ciou": _ratio(float(totals["sum_ciou"]), n),
+        "precision@0.5": precision,
+        "recall@0.5": recall,
+        "f1@0.5": f1,
+        "diagnostic_matched_p@0.5": _ratio(
+            int(totals["diagnostic_matched_correct"]), matched_total
+        ),
         "num_parts": len(parts),
     }
-    (output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    (output_dir / "metrics.json").write_text(
+        json.dumps(metrics, indent=2), encoding="utf-8"
+    )
     print(json.dumps(metrics, ensure_ascii=False))
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

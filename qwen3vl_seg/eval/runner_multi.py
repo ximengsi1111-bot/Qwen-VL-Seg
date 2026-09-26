@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from PIL import Image, ImageDraw
 
 from qwen3vl_seg.data.dataset import SegmentationDataset, normalize_decoder_image
-from qwen3vl_seg.eval.metrics import mask_iou, match_masks
+from qwen3vl_seg.eval.metrics import instance_metrics, union_ciou
 from qwen3vl_seg.model.model_wrapper import Qwen3VLSegForSegmentation
 from qwen3vl_seg.model.prompt_format import (
     MASK_END,
@@ -227,12 +227,12 @@ def main() -> int:
         print(f"[runner_multi] resume: skipping {len(done_ids)} done samples", flush=True)
     out_fh = out_path.open("w", encoding="utf-8")
     results: list[dict[str, Any]] = []
-    all_ious: list[float] = []
-    sum_inter = 0.0
-    sum_union = 0.0
-    strict_values: list[float] = []
-    strict_correct = 0
-    strict_total = 0
+    diagnostic_ious: list[float] = []
+    sum_miou = 0.0
+    sum_ciou = 0.0
+    tp_at_05 = 0
+    fp_at_05 = 0
+    fn_at_05 = 0
 
     def _pad_img(img, bucket):
         if bucket:
@@ -268,7 +268,7 @@ def main() -> int:
         return raw.replace("<|im_start|>", "").replace("<|im_end|>", "").strip()
 
     def process_group(indices, bucket):
-        nonlocal sum_inter, sum_union, strict_correct, strict_total
+        nonlocal sum_miou, sum_ciou, tp_at_05, fp_at_05, fn_at_05
         bsz = max(1, int(args.batch_size))
         for s0 in range(0, len(indices), bsz):
             ids = indices[s0:s0 + bsz]
@@ -373,23 +373,22 @@ def main() -> int:
                     gt = item["masks"].cpu().numpy()
                     pred_list = [preds[j] for j in range(num)]
                     gt_list = [np.asarray(gt[j]) for j in range(gt.shape[0])]
-                    pred_idx, gt_idx, total = match_masks(pred_list, gt_list)
-                    matched_ious = []
-                    for pj, gj in zip(pred_idx, gt_idx):
-                        iou = float(mask_iou(np.expand_dims(pred_list[pj], 0), np.expand_dims(gt_list[gj], 0)))
-                        matched_ious.append(iou)
-                        inter = np.logical_and(pred_list[pj] > 0, gt_list[gj] > 0).sum()
-                        union = np.logical_or(pred_list[pj] > 0, gt_list[gj] > 0).sum()
-                        sum_inter += float(inter)
-                        sum_union += float(union)
-                    all_ious.extend(matched_ious)
-                    strict_correct += sum(1 for iou in matched_ious if iou >= 0.5)
-                    strict_total += len(gt_list)
-                    strict = total / max(len(gt_list), 1)
+                    metrics = instance_metrics(pred_list, gt_list, threshold=0.5)
+                    matched_ious = list(metrics["ious"])
+                    ciou = union_ciou(pred_list, gt_list)
+                    diagnostic_ious.extend(matched_ious)
+                    sum_miou += float(metrics["miou"])
+                    sum_ciou += ciou
+                    tp_at_05 += int(metrics["tp"])
+                    fp_at_05 += int(metrics["fp"])
+                    fn_at_05 += int(metrics["fn"])
                     row["mask_ious"] = matched_ious
                     row["iou_scores"] = [float(v) for v in iou_preds]
-                    row["miou"] = strict
-                    strict_values.append(strict)
+                    row["miou"] = float(metrics["miou"])
+                    row["ciou"] = ciou
+                    row["tp@0.5"] = int(metrics["tp"])
+                    row["fp@0.5"] = int(metrics["fp"])
+                    row["fn@0.5"] = int(metrics["fn"])
                     if save_viz:
                         _save_mask_viz(image, preds, [r["bbox_2d"] for r in records], gt,
                                        item["boxes"].detach().cpu().numpy(),
@@ -426,34 +425,42 @@ def main() -> int:
                     gt = item["masks"].cpu().numpy()
                     pred_list = [preds[i] for i in range(num)]
                     gt_list = [np.asarray(gt[j]) for j in range(gt.shape[0])]
-                    pred_idx, gt_idx, total = match_masks(pred_list, gt_list)
-                    matched_ious = []
-                    for pj, gj in zip(pred_idx, gt_idx):
-                        iou = float(mask_iou(np.expand_dims(pred_list[pj], 0), np.expand_dims(gt_list[gj], 0)))
-                        matched_ious.append(iou)
-                        inter = np.logical_and(pred_list[pj] > 0, gt_list[gj] > 0).sum()
-                        union = np.logical_or(pred_list[pj] > 0, gt_list[gj] > 0).sum()
-                        sum_inter += float(inter)
-                        sum_union += float(union)
-                    all_ious.extend(matched_ious)
-                    strict_correct += sum(1 for iou in matched_ious if iou >= 0.5)
-                    strict_total += len(gt_list)
-                    strict = total / max(len(gt_list), 1)
+                    metrics = instance_metrics(pred_list, gt_list, threshold=0.5)
+                    matched_ious = list(metrics["ious"])
+                    ciou = union_ciou(pred_list, gt_list)
+                    diagnostic_ious.extend(matched_ious)
+                    sum_miou += float(metrics["miou"])
+                    sum_ciou += ciou
+                    tp_at_05 += int(metrics["tp"])
+                    fp_at_05 += int(metrics["fp"])
+                    fn_at_05 += int(metrics["fn"])
                     row["mask_ious"] = matched_ious
                     row["iou_scores"] = [float(v) for v in iou_preds]
-                    row["miou"] = strict
-                    strict_values.append(strict)
+                    row["miou"] = float(metrics["miou"])
+                    row["ciou"] = ciou
+                    row["tp@0.5"] = int(metrics["tp"])
+                    row["fp@0.5"] = int(metrics["fp"])
+                    row["fn@0.5"] = int(metrics["fn"])
                     if save_viz:
                         _save_mask_viz(image, preds, [r["bbox_2d"] for r in records], gt,
                                        item["boxes"].detach().cpu().numpy(),
                                        output_dir / "viz" / f"{sample.sample_id}_cmp.png")
 
-            # non-valid rows get miou 0
+            # Non-valid rows count all predicted records as false positives and
+            # all GT instances as false negatives.
             for (row, sample, item, image, records, decoder_text) in rows:
                 if "miou" not in row:
+                    gt = item["masks"].cpu().numpy()
+                    num_gt = int(gt.shape[0])
+                    num_pred = len(records)
                     row["miou"] = 0.0
+                    row["ciou"] = 0.0
                     row["mask_ious"] = []
-                    strict_values.append(0.0)
+                    row["tp@0.5"] = 0
+                    row["fp@0.5"] = num_pred
+                    row["fn@0.5"] = num_gt
+                    fp_at_05 += num_pred
+                    fn_at_05 += num_gt
                 results.append(row)
                 out_fh.write(json.dumps(row, ensure_ascii=False) + "\n")
                 out_fh.flush()
@@ -487,13 +494,17 @@ def main() -> int:
         "rank": shard_rank,
         "shard_size": shard_size,
         "n_samples": n_samples,
-        "sum_strict": float(np.sum(strict_values)) if strict_values else 0.0,
-        "sum_inter": float(sum_inter),
-        "sum_union": float(sum_union),
-        "matched_correct": int(np.sum(np.asarray(all_ious) >= 0.5)) if all_ious else 0,
-        "matched_total": int(len(all_ious)),
-        "strict_correct": int(strict_correct),
-        "strict_total": int(strict_total),
+        "sum_miou": float(sum_miou),
+        "sum_ciou": float(sum_ciou),
+        "tp@0.5": int(tp_at_05),
+        "fp@0.5": int(fp_at_05),
+        "fn@0.5": int(fn_at_05),
+        "diagnostic_matched_correct": (
+            int(np.sum(np.asarray(diagnostic_ious) >= 0.5))
+            if diagnostic_ious
+            else 0
+        ),
+        "diagnostic_matched_total": int(len(diagnostic_ious)),
         "predictions": str(out_path.name),
     }
     (output_dir / f"metrics.partial.{shard_rank}.json").write_text(
