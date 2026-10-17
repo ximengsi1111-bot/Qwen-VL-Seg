@@ -12,3 +12,4 @@ configs/secrets/
 *.safetensors
 *.pt
 
+torchelastic_*/
