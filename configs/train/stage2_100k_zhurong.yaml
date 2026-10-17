@@ -23,7 +23,7 @@ method: full
 train_vision_encoder: false
 train_decoder: true
 max_pixels: 786432
-save_interval: 500
+save_interval: 2000
 checkpoint_dir: /file_storage01/home/mingli/data/xyk/checkpoints/small/stage2-100k
 stage1_checkpoint: /file_storage01/home/mingli/data/xyk/checkpoints/small/stage1-100k
 manifest: /file_storage01/home/mingli/data/xyk/build100k/datasets/small/samples.jsonl
